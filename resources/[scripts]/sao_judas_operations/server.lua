@@ -180,6 +180,11 @@ local function canUseLaboratory(Passport,skipCache)
     return isLeader(Passport) or hasLaboratoryRole(Passport,skipCache)
 end
 
+local function atLocation(source,coords,maximumDistance)
+    if GetPlayerRoutingBucket(source) ~= 0 then return false end
+    return #(vRP.GetEntityCoords(source) - coords) <= maximumDistance
+end
+
 local function atLaboratory(source)
     local lab = SaoJudasOperations.Laboratory
     return lab.Enabled and atLocation(source,lab.Coords,lab.ServerDistance) or false
@@ -250,11 +255,6 @@ local function creditCleanPending(Passport,amount,referenceKey,activity,metadata
     )
 
     return inserted,inserted and "ok" or "duplicate_or_database_error"
-end
-
-local function atLocation(source,coords,maximumDistance)
-    if GetPlayerRoutingBucket(source) ~= 0 then return false end
-    return #(vRP.GetEntityCoords(source) - coords) <= maximumDistance
 end
 
 local function atWorkbench(source)
