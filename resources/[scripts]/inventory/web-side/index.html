@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lil</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="./script.js"></script>
+    <script defer src="./of-destroy.js"></script>
+    <script defer src="./of-shop-buy.js"></script>
+    <link rel="stylesheet" crossorigin href="./style.css">
+    <link rel="stylesheet" href="./of-shop-buy.css">
+</head>
+
+<body>
+    <div id="app"></div>
+    <div id="shop-confirm-root" class="shop-confirm-root" hidden aria-hidden="true">
+        <div class="shop-confirm-backdrop"></div>
+        <section class="shop-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="shop-confirm-title">
+            <div class="shop-confirm-accent"></div>
+            <header class="shop-confirm-header">
+                <div>
+                    <span class="shop-confirm-kicker">Ouro Fino Comercio</span>
+                    <h2 id="shop-confirm-title">Confirmar compra</h2>
+                </div>
+                <button id="shop-confirm-close" class="shop-confirm-close" type="button" aria-label="Cancelar compra">&times;</button>
+            </header>
+            <div class="shop-confirm-product">
+                <span>Produto</span>
+                <strong id="shop-confirm-item">-</strong>
+            </div>
+            <dl class="shop-confirm-details">
+                <div><dt>Quantidade</dt><dd id="shop-confirm-amount">1</dd></div>
+                <div><dt>Valor unitario</dt><dd id="shop-confirm-unit">R$ 0</dd></div>
+                <div class="shop-confirm-total"><dt>Total</dt><dd id="shop-confirm-total">R$ 0</dd></div>
+            </dl>
+            <p id="shop-confirm-message" class="shop-confirm-message" aria-live="polite"></p>
+            <footer class="shop-confirm-actions">
+                <button id="shop-confirm-cancel" type="button" class="shop-confirm-secondary">Cancelar</button>
+                <button id="shop-confirm-submit" type="button" class="shop-confirm-primary">Confirmar compra</button>
+            </footer>
+        </section>
+    </div>
+</body>
+
+</html>

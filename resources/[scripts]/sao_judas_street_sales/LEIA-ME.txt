@@ -1,0 +1,17 @@
+CORREÇÃO — MODO CONTÍNUO DE VENDA DE RUA
+
+Substitua client.lua, server.lua e config.lua em:
+resources/[scripts]/sao_judas_street_sales/
+
+Depois execute:
+restart sao_judas_street_sales
+
+Comportamento:
+- target manual: NPC pode aceitar, recusar, denunciar ou ir embora;
+- /venderdrogas: comprador que se aproxima sempre aceita;
+- o comando é ligado uma vez e permanece ativo até ser executado novamente;
+- entrar/sair de veículo ou movimentar o carro apenas pausa a procura;
+- a pé ou parado no banco do motorista, a procura retoma automaticamente;
+- após a venda e o cooldown, outro comprador é procurado;
+- o raio automático é 14 m e o NPC é sorteado entre os 5 mais próximos;
+- somente membro autorizado de São Judas (líder ou Operador de Distribuição) pode usar.

@@ -1,0 +1,160 @@
+# ============================================
+# FiveM ‚Äî runtime, cache e arquivos tempor√°rios
+# ============================================
+
+cache/
+**/cache/
+server-cache/
+server-cache-priv/
+txData/
+logs/
+log/
+crashes/
+crashdumps/
+artifacts/
+temp/
+tmp/
+
+*.log
+*.tmp
+*.cache
+
+# ============================================
+# Depend√™ncias regener√°veis
+# ============================================
+
+node_modules/
+bower_components/
+vendor/cache/
+
+# ============================================
+# Credenciais e configura√ß√µes privadas
+# ============================================
+
+server.cfg
+*.env
+.env
+.env.*
+credentials.json
+secrets.json
+config.private.lua
+config.local.lua
+
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ============================================
+# Backups e arquivos compactados
+# ============================================
+
+Backups/
+Backup/
+backups/
+backup/
+
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+
+# ============================================
+# Dumps e bancos locais
+# Mant√©m SQL normais dos resources
+# ============================================
+
+database_dump.sql
+database_full.sql
+*_database_dump.sql
+*_database_full.sql
+*.sqlite
+*.sqlite3
+*.db
+
+# ============================================
+# Mapas, ve√≠culos e assets stream pesados
+# ============================================
+
+**/stream/
+
+*.rpf
+*.ytd
+*.ydr
+*.yft
+*.ybn
+*.ymap
+*.ytyp
+*.awc
+
+# ============================================
+# √Åudio e v√≠deo pesados
+# ============================================
+
+*.mp3
+*.wav
+*.ogg
+*.mp4
+*.webm
+*.avi
+*.mov
+*.mkv
+
+# ============================================
+# Bin√°rios
+# ============================================
+
+*.exe
+*.dll
+*.pdb
+
+# ============================================
+# Sistema operacional e editores
+# ============================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+*.swp
+*.swo
+# Backups de editores e assistentes
+*.bak
+*.bak_*
+*.bak_codex
+
+# Patches tempor·rios
+*.diff
+*.patch
+
+# Backups tempor·rios
+*.bak
+*.bak_*
+*.bak_codex
+
+# Patches tempor·rios
+*.diff
+*.patch
+
+# CÛpias de mapas geradas em relatÛrios de auditoria
+docs/relatorios/**/xml/
+docs/relatorios/**/stream/
+
+@"
+
+# Backups tempor·rios
+*.bak
+*.bak_*
+*.bak_codex
+
+# Patches tempor·rios
+*.diff
+*.patch
+
+# CÛpias de mapas geradas em relatÛrios de auditoria
+docs/relatorios/**/xml/
+docs/relatorios/**/stream/
+"@ | Add-Content ".gitignore"

@@ -1,0 +1,90 @@
+{
+  "items": 392,
+  "generatedFurnitureItems": 24,
+  "itemsWithoutDescription": 243,
+  "itemsWithoutImage": 7,
+  "itemsWithoutLuaReference": 30,
+  "missingImageItems": [
+    "dompeidon",
+    "furniture_halloween_ghost",
+    "furniture_halloween_pumpkin",
+    "halloween_ghost",
+    "halloween_pumpkin",
+    "mapgps",
+    "mechanicbag"
+  ],
+  "craftingModes": 11,
+  "craftingModeNames": [
+    "Essence",
+    "FoodRestaurante",
+    "DrinkRestaurante",
+    "Furnace",
+    "Mecanico",
+    "pistol_bench",
+    "smg_bench",
+    "rifle_bench",
+    "blueprint_bench",
+    "drugs_bench",
+    "Lester"
+  ],
+  "craftingRecipes": 103,
+  "storeProducts": 38,
+  "storeCategories": {
+    "Armamentos": 3,
+    "Diamantes": 1,
+    "Domésticos": 8,
+    "Ferramentas de Trabalho": 3,
+    "Grupos": 6,
+    "Lavagem": 6,
+    "Medicamentos": 1,
+    "Utilidades": 4,
+    "Veículos": 2,
+    "Vestimentas": 4
+  },
+  "furnitureStoreProducts": 6,
+  "furnitureStoreCategories": {
+    "Cofres": 6
+  },
+  "specialProperties": 2,
+  "boxes": [
+    {
+      "name": "Caixa de Diamantes",
+      "price": 500,
+      "rewards": 12
+    },
+    {
+      "name": "Caixa de Platinas",
+      "price": 1000,
+      "rewards": 12
+    },
+    {
+      "name": "Caixa de Alumínio",
+      "price": 500,
+      "rewards": 6
+    },
+    {
+      "name": "Caixa de Vidro",
+      "price": 500,
+      "rewards": 6
+    },
+    {
+      "name": "Caixa de Cobre",
+      "price": 500,
+      "rewards": 6
+    },
+    {
+      "name": "Caixa de Borracha",
+      "price": 500,
+      "rewards": 6
+    },
+    {
+      "name": "Caixa de Plástico",
+      "price": 500,
+      "rewards": 6
+    }
+  ],
+  "battlepassRewards": {
+    "Free": 30,
+    "Premium": 30
+  }
+}
