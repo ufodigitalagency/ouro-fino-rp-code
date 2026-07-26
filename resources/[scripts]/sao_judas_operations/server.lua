@@ -210,6 +210,19 @@ local function validateLaboratoryPlayerState(source)
     return true
 end
 
+local function canAccessLaboratory(source)
+    local Passport = vRP.Passport(source)
+    if not Passport then return false,"invalid_passport" end
+
+    local stateValid,stateReason = validateLaboratoryPlayerState(source)
+    if not stateValid then return false,stateReason end
+    if not isMember(Passport) then return false,"not_member" end
+    if not canUseLaboratory(Passport) then return false,"role_missing" end
+    if not atLaboratory(source) then return false,"too_far" end
+
+    return true,"ok"
+end
+
 local function balances()
     prepareDatabase()
     local row = exports.oxmysql:single_async([[SELECT
@@ -492,6 +505,7 @@ exports("HasDistributionRole",hasDistributionRole)
 exports("CanUseDistribution",canUseDistribution)
 exports("HasLaboratoryRole",hasLaboratoryRole)
 exports("CanUseLaboratory",canUseLaboratory)
+exports("CanAccessLaboratory",canAccessLaboratory)
 exports("AtWorkbench",atWorkbench)
 exports("AtLaboratory",atLaboratory)
 exports("Balances",balances)
@@ -560,8 +574,8 @@ RegisterNetEvent("saoJudas:UseLaboratory",function()
         return
     end
 
-    notify(source,"O laboratorio esta sendo preparado.","amarelo")
-    labLog(("passport=%s source=%s status=access_granted reason=placeholder"):format(Passport,source))
+    TriggerClientEvent("crafting:OpenSaoJudasLaboratory",source)
+    labLog(("passport=%s source=%s status=access_granted reason=interface_opened"):format(Passport,source))
 end)
 
 RegisterCommand("saojudas_vault_debug",function(source)

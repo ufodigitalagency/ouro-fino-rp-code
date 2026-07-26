@@ -261,6 +261,9 @@ function Lil.Mount(Name)
 	if Name == "SaoJudas" and not saoJudasContext(source,Passport) then
 		return false
 	end
+	if Name == "SaoJudasLaboratory" and not exports.sao_judas_operations:CanAccessLaboratory(source) then
+		return false
+	end
 
 	if Passport and Name and List[Name] then
 		local Primary = {}
@@ -324,6 +327,11 @@ function Lil.Take(Item,Amount,Target,Name)
 	end
 
 	if Name == "SaoJudas" then
+		return false
+	end
+
+	if Name == "SaoJudasLaboratory" then
+		craftingNotify(source,"A producao do laboratorio ainda esta sendo preparada.","amarelo")
 		return false
 	end
 

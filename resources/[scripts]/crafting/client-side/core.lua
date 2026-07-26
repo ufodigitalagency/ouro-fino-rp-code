@@ -294,6 +294,12 @@ RegisterNetEvent("crafting:OpenSaoJudas",function()
 	end
 end)
 
+RegisterNetEvent("crafting:OpenSaoJudasLaboratory",function()
+	if not exports.hud:Wanted() then
+		OpenCrafting("SaoJudasLaboratory")
+	end
+end)
+
 RegisterNetEvent("crafting:SaoJudasCancelled",function(CraftId)
 	if SaoJudasCraft.CraftId == CraftId and SaoJudasCraft.State ~= "idle" then
 		SaoJudasCraft.ServerCancelled = true
