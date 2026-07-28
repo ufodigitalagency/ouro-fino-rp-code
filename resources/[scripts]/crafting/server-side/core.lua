@@ -331,7 +331,7 @@ function Lil.Take(Item,Amount,Target,Name)
 	end
 
 	if Name == "SaoJudasLaboratory" then
-		craftingNotify(source,"A producao do laboratorio ainda esta sendo preparada.","amarelo")
+		TriggerClientEvent("Notify",source,"Laboratório de São Judas","A producao do laboratorio ainda esta sendo preparada.","amarelo",5000)
 		return false
 	end
 
