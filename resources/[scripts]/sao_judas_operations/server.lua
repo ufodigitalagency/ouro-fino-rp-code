@@ -717,6 +717,18 @@ RegisterNetEvent("saoJudas:UseLaboratory",function()
     labLog(("passport=%s source=%s status=access_granted reason=interface_opened"):format(Passport,source))
 end)
 
+RegisterNetEvent("saoJudas:RequestSupplierBlipAccess",function()
+    local source = source
+    if not rateAllowed(source,"supplier_blip",2000) then return end
+
+    local supplier = SaoJudasOperations.SulfuricSupplier
+    local settings = supplier and supplier.Blip
+    local Passport = vRP.Passport(source)
+    local Allowed = supplier and supplier.Enabled and settings and settings.Enabled and Passport and canUseLaboratory(Passport) or false
+
+    TriggerClientEvent("saoJudas:SetSupplierBlipAccess",source,Allowed == true)
+end)
+
 local SupplyAccessMessages = {
     supplier_disabled = "O fornecedor esta temporariamente indisponivel.",
     invalid_passport = "Seu personagem nao esta disponivel neste momento.",

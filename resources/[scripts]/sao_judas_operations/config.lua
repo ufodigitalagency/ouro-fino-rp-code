@@ -195,7 +195,17 @@ SaoJudasOperations = {
         MinimumAmount = 1,
         MaximumAmount = 5,
         CooldownSeconds = 30 * 60,
-        LockTimeoutSeconds = 90
+        LockTimeoutSeconds = 90,
+        Blip = {
+            Enabled = true,
+            Name = "Contato Químico",
+            Sprite = 1,
+            Color = 5,
+            Scale = 0.55,
+            Display = 4,
+            ShortRange = true,
+            RefreshSeconds = 10
+        }
     },
 
     Debug = false
