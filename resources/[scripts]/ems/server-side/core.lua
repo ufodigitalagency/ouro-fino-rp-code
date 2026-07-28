@@ -1883,9 +1883,23 @@ function Lil.SavePermissions(Permissions)
     local source = source
     local Passport = vRP.Passport(source)
     local Group = Passport and Division[Passport]
+    local Hierarchy = type(Group) == "string" and Group ~= "" and vRP.Hierarchy(Group) or nil
+    local ValidGroup = type(Hierarchy) == "table" and #Hierarchy > 0
+    local Level = ValidGroup and vRP.HasPermission(Passport,Group) or false
 
-    if not Passport or not Group or not Permissions or type(Permissions) ~= "table" then
+    local function Denied(Message)
+        print(("[ems] Passport=%s Group=%s Level=%s Action=SavePermissions denied"):format(tostring(Passport),tostring(Group),tostring(Level)))
+        TriggerClientEvent("ems:Notify",source,"Atenção",Message,"amarelo")
+
         return false
+    end
+
+    if not Passport or not Group or not ValidGroup or not Level or Level ~= 1 then
+        return Denied("Você não possui permissão para alterar permissões.")
+    end
+
+    if type(Permissions) ~= "table" then
+        return Denied("Dados de permissões inválidos.")
     end
 
     vRP.SetSrvData("EMS:Permissions:"..Group,Permissions,true)
