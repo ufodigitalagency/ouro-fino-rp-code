@@ -106,10 +106,6 @@ RegisterNUICallback("renewWorkPermit", function(data, cb)
     cb('ok')
 end)
 
-RegisterCommand("cfworks", function()
-    TriggerEvent("Notify", "amarelo", "Use o blip da Central de Empregos no mapa para abrir este painel.", 5000)
-end)
-
 RegisterNetEvent("cfWorks:updateUI")
 AddEventHandler("cfWorks:updateUI", function(payload)
     SendNUIMessage({

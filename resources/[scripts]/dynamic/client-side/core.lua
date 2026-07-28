@@ -233,7 +233,7 @@ RegisterCommand("EmergencyFunctions",function()
 			exports.dynamic:AddButton("Remover Óculos","Remover da pessoa mais próxima.","skinshop:Remove","Glasses","player",true)
 
 			exports.dynamic:AddMenu("Fardamentos","Todos os fardamentos médicos.","preMedic")
-			exports.dynamic:AddButton("Principal","Fardamento de oficial.","player:Preset","2","preMedic",true)
+			exports.dynamic:AddButton("Principal","Fardamento de Paramédico.","player:Preset","2","preMedic",true)
 
 			exports.dynamic:Open()
 		end
