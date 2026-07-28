@@ -317,13 +317,15 @@ CreateThread(function()
 		if v.RegisterTarget ~= false then
 			local Label = v.Name or shopName(v.Mode)
 			local Radius = math.max(tonumber(v.Circle) or 0.0,1.35)
-			local Options = {
-				{
+			local Options = {}
+
+			if v.DefaultTargetOption ~= false then
+				Options[#Options + 1] = {
 					event = "shops:Open",
 					label = Label,
 					tunnel = "client"
 				}
-			}
+			end
 
 			for _,Option in ipairs(v.AdditionalTargetOptions or {}) do
 				Options[#Options + 1] = Option

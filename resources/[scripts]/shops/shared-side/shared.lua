@@ -112,6 +112,7 @@ Location = {
 	},{
 		Coords = vec3(179.9,2779.98,45.7),
 		Mode = "Clandestine",
+		DefaultTargetOption = false,
 		AdditionalTargetOptions = {
 			{
 				event = "saoJudas:BuySulfuric",
