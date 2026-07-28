@@ -76,6 +76,44 @@ local function resolveShopReference(Reference)
 	return Reference
 end
 
+local ShopAccessMessages = {
+	wanted = "Voce nao pode acessar lojas enquanto estiver procurado.",
+	taxes = "Voce possui impostos vencidos.",
+	fines = "Voce possui multas vencidas.",
+	no_service = "Entre em servico para acessar esta loja.",
+	no_permission = "Voce nao possui permissao para acessar esta loja.",
+	invalid_shop = "Esta loja nao esta disponivel.",
+	invalid_location = "Este ponto de loja nao esta disponivel.",
+	too_far = "Aproxime-se do ponto da loja.",
+	player_unavailable = "Seu personagem nao esta disponivel neste momento.",
+	tunnel_error = "Nao foi possivel validar o acesso a esta loja."
+}
+
+local function notifyShopDenied(Response)
+	Response = type(Response) == "table" and Response or {}
+	if Response.notified == true then return end
+
+	local Code = tostring(Response.code or "tunnel_error")
+	local Message = tostring(Response.message or "")
+	if Message == "" then Message = ShopAccessMessages[Code] or ShopAccessMessages.tunnel_error end
+	TriggerEvent("Notify","Loja",Message,"amarelo",5000)
+end
+
+local function requestShopPermission(Name,LocationIndex)
+	local Worked,Response = pcall(vSERVER.Permission,Name,LocationIndex)
+	if not Worked then
+		print(("[shops] unexpected_failure context=permission_tunnel shop=%s detail=%s"):format(tostring(Name),tostring(Response)))
+		return false,{ success = false, code = "tunnel_error", message = ShopAccessMessages.tunnel_error }
+	end
+
+	if type(Response) ~= "table" then
+		print(("[shops] unexpected_failure context=permission_response shop=%s responseType=%s"):format(tostring(Name),type(Response)))
+		return false,{ success = false, code = "tunnel_error", message = ShopAccessMessages.tunnel_error }
+	end
+
+	return Response.success == true,Response
+end
+
 local function HelpText(Text)
 	BeginTextCommandDisplayHelp("STRING")
 	AddTextComponentSubstringPlayerName(Text)
@@ -247,40 +285,43 @@ end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 AddEventHandler("shops:Open",function(Number)
 	Number = resolveShopReference(Number)
-	local RequestedShop = Location[Number] and Location[Number].Mode or Number
-	if RequestedShop == "Pombal" or RequestedShop == "SaoJudas" then
-		print(("[shops] faction_arsenal_open_requested shop=%s location=%s"):format(tostring(RequestedShop),tostring(Number)))
-	end
-
-	if exports.hud:Wanted() then
-		if RequestedShop == "Pombal" or RequestedShop == "SaoJudas" then
-			TriggerEvent("Notify","Atenção","O arsenal não pode ser acessado enquanto você estiver procurado.","amarelo",5000)
-		end
-
-		return
-	end
-
 	local Shop = Location[Number]
 	if not Shop then
-		if vSERVER.Permission(Number) and List[Number] then
-			Opened = Number
-			OpenedLocation = false
-
-			TriggerEvent("inventory:Open",{
-				Type = "Shops",
-				Mode = List[Opened].Mode,
-				Free = List[Opened].Type == "Free",
-				Item = List[Opened].Item or "dollar",
-				Resource = "shops",
-				Right = shopName(Opened)
-			})
+		if not List[Number] then
+			notifyShopDenied({ code = "invalid_shop" })
+			return
 		end
+
+		local Allowed,Response = requestShopPermission(Number)
+		if not Allowed then
+			notifyShopDenied(Response)
+			return
+		end
+
+		Opened = Number
+		OpenedLocation = false
+
+		TriggerEvent("inventory:Open",{
+			Type = "Shops",
+			Mode = List[Opened].Mode,
+			Free = List[Opened].Type == "Free",
+			Item = List[Opened].Item or "dollar",
+			Resource = "shops",
+			Right = shopName(Opened)
+		})
 
 		return
 	end
 
 	local RouteMatch = not Shop.Route or Shop.Route == LocalPlayer.state.Route
-	if not RouteMatch or not vSERVER.Permission(Shop.Mode,Number) then
+	if not RouteMatch then
+		notifyShopDenied({ code = "invalid_location", message = "Voce nao esta na instancia desta loja." })
+		return
+	end
+
+	local Allowed,Response = requestShopPermission(Shop.Mode,Number)
+	if not Allowed then
+		notifyShopDenied(Response)
 		return
 	end
 

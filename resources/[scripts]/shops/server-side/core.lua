@@ -33,29 +33,83 @@ local function result(success,message,code,data)
 	return response
 end
 
-local function hasShopPermission(source,Passport,Name)
-	local Data = List[Name]
-	if not Passport or not Data then
+local function unexpectedFailure(context,detail)
+	print(("[shops] unexpected_failure context=%s detail=%s"):format(tostring(context),tostring(detail)))
+end
+
+local function checkedBoolean(context,callback)
+	local Worked,Value = pcall(callback)
+	if not Worked then
+		unexpectedFailure(context,Value)
+		return nil
+	end
+
+	if type(Value) ~= "boolean" then
+		unexpectedFailure(context,("unexpected_type=%s value=%s"):format(type(Value),tostring(Value)))
 		return false
 	end
 
-	if Name ~= "Banned" and (exports.bank:CheckTaxes(Passport) or exports.bank:CheckFines(Passport)) then
-		return false
+	return Value
+end
+
+local function hasShopPermission(source,Passport,Name)
+	local Data = List[Name]
+	if not Passport then
+		return false,"player_unavailable","Seu personagem nao esta disponivel neste momento."
+	elseif not Data then
+		return false,"invalid_shop","Esta loja nao esta disponivel."
+	end
+
+	local Wanted = checkedBoolean("hud_wanted",function()
+		return exports.hud:Wanted(Passport)
+	end)
+	if Wanted == nil then
+		return false,"tunnel_error","Nao foi possivel validar seu estado de procurado."
+	elseif Wanted then
+		return false,"wanted","Voce nao pode acessar lojas enquanto estiver procurado."
+	end
+
+	if Name ~= "Banned" then
+		local Taxes = checkedBoolean("bank_taxes",function()
+			return exports.bank:CheckTaxes(Passport)
+		end)
+		if Taxes == nil then
+			return false,"tunnel_error","Nao foi possivel validar seus impostos."
+		elseif Taxes then
+			return false,"taxes","Voce possui impostos vencidos.",true
+		end
+
+		local Fines = checkedBoolean("bank_fines",function()
+			return exports.bank:CheckFines(Passport)
+		end)
+		if Fines == nil then
+			return false,"tunnel_error","Nao foi possivel validar suas multas."
+		elseif Fines then
+			return false,"fines","Voce possui multas vencidas.",true
+		end
 	end
 
 	if MultiplayerDiagnosticsActive and Player(source).state["af:multiplayerGuestMode"] == true and Data.Permission then
-		return false
+		return false,"no_permission","Voce nao possui permissao para acessar esta loja."
 	end
 
 	if not Data.Permission then
-		return true
+		return true,"ok"
 	end
 
 	if Data.PermissionMode == "Group" then
-		return vRP.HasGroup(Passport,Data.Permission,Data.PermissionLevel) and true or false
+		if vRP.HasGroup(Passport,Data.Permission,Data.PermissionLevel) then
+			return true,"ok"
+		end
+
+		return false,"no_permission","Voce nao possui permissao para acessar esta loja."
 	end
 
-	return vRP.HasService(Passport,Data.Permission) and true or false
+	if vRP.HasService(Passport,Data.Permission) then
+		return true,"ok"
+	end
+
+	return false,"no_service","Entre em servico para acessar esta loja."
 end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PERMISSION
@@ -64,27 +118,26 @@ function Lil.Permission(Name,LocationIndex)
 	local source = source
 	local Data = List[Name]
 	local Passport = vRP.Passport(source)
-	if not Passport or not Data then
-		return false
-	end
-
-	local Allowed = hasShopPermission(source,Passport,Name)
-	if Allowed and LocationIndex ~= nil then
-		Allowed = validateLocation(source,Name,LocationIndex) == true
-	elseif Allowed and Data.RequiresLocation then
-		Allowed = false
-	end
-	if Name == "Pombal" or Name == "SaoJudas" then
-		local IsLeader = vRP.HasGroup(Passport,Name,1) and true or false
-		print(("[shops] faction_arsenal_permission faction=%s passport=%s leader=%s allowed=%s"):format(tostring(Name),tostring(Passport),tostring(IsLeader),tostring(Allowed)))
-
-		if not Allowed then
-			local FactionName = Name == "SaoJudas" and "São Judas" or "Pombal"
-			TriggerClientEvent("Notify",source,"Atenção","Somente o Chefe de "..FactionName.." pode acessar este arsenal.","amarelo",5000)
+	local Allowed,PermissionCode,PermissionMessage,AlreadyNotified = hasShopPermission(source,Passport,Name)
+	if not Allowed then
+		if PermissionCode == "no_permission" and (Name == "Pombal" or Name == "SaoJudas") then
+			local FactionName = Name == "SaoJudas" and "Sao Judas" or "Pombal"
+			PermissionMessage = "Somente o Chefe de "..FactionName.." pode acessar este arsenal."
 		end
+
+		return result(false,PermissionMessage,PermissionCode,{ notified = AlreadyNotified == true })
 	end
 
-	return Allowed
+	if LocationIndex ~= nil then
+		local ValidLocation,LocationMessage,LocationCode = validateLocation(source,Name,LocationIndex)
+		if not ValidLocation then
+			return result(false,LocationMessage,LocationCode or "invalid_location")
+		end
+	elseif Data.RequiresLocation then
+		return result(false,"Utilize o ponto oficial desta loja.","invalid_location")
+	end
+
+	return result(true,"Acesso autorizado.","ok")
 end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- MOUNT
@@ -235,44 +288,64 @@ local function normalizePurchase(Item,Amount)
 	return Item,numericAmount
 end
 
-validateLocation = function(source,Name,LocationIndex,Origin)
-	local Ped = GetPlayerPed(source)
-	if Ped == 0 then
-		return false,"Personagem indisponivel."
+local function playerCoords(source)
+	local Worked,Coords = pcall(function()
+		return vRP.GetEntityCoords(source)
+	end)
+	if not Worked then
+		unexpectedFailure("player_coords",Coords)
+		return nil,"Nao foi possivel consultar sua localizacao.","tunnel_error"
 	end
 
-	local Coords = GetEntityCoords(Ped)
+	local X = Coords and tonumber(Coords.x)
+	local Y = Coords and tonumber(Coords.y)
+	local Z = Coords and tonumber(Coords.z)
+	if not X or not Y or not Z or (math.abs(X) + math.abs(Y) + math.abs(Z)) < 0.001 then
+		return nil,"Seu personagem nao esta disponivel neste momento.","player_unavailable"
+	end
+
+	return Coords
+end
+
+validateLocation = function(source,Name,LocationIndex,Origin)
+	local Coords,CoordsMessage,CoordsCode = playerCoords(source)
+	if not Coords then
+		return false,CoordsMessage,CoordsCode
+	end
+
 	local Index = tonumber(LocationIndex)
 	if Index then
 		local Shop = Location[Index]
 		if not Shop or Shop.Mode ~= Name then
-			return false,"Ponto de loja invalido."
+			return false,"Ponto de loja invalido.","invalid_location"
 		end
 
 		if Shop.Route and Shop.Route ~= GetPlayerRoutingBucket(source) then
-			return false,"Voce nao esta na instancia desta loja."
+			return false,"Voce nao esta na instancia desta loja.","invalid_location"
 		end
 
 		local MaximumDistance = math.max(ShopInteractionDistance,(tonumber(Shop.Circle) or 0.0) + 2.5)
 		if #(Coords - Shop.Coords) > MaximumDistance then
-			return false,"Voce se afastou da loja."
+			return false,"Voce se afastou da loja.","too_far"
 		end
 
-		return true,Coords
+		return true,Coords,"ok"
+	elseif LocationIndex ~= nil then
+		return false,"Ponto de loja invalido.","invalid_location"
 	end
 
 	local Data = List[Name]
 	if Data and Data.RequiresLocation then
-		return false,"Utilize o ponto oficial desta loja."
+		return false,"Utilize o ponto oficial desta loja.","invalid_location"
 	end
 
 	-- Lojas abertas por objetos e integracoes antigas nao possuem um indice em
 	-- Location. A cotacao fixa a posicao inicial e impede confirmacao remota.
 	if Origin and #(Coords - Origin) > ShopInteractionDistance then
-		return false,"Voce se afastou da loja."
+		return false,"Voce se afastou da loja.","too_far"
 	end
 
-	return true,Coords
+	return true,Coords,"ok"
 end
 
 local function validateCarry(Passport,Item,Amount)
@@ -328,8 +401,9 @@ function Lil.CreateQuote(Item,Amount,Name,LocationIndex)
 		return result(false,"Esta loja nao esta disponivel.","invalid_shop")
 	end
 
-	if not hasShopPermission(source,Passport,Name) then
-		return result(false,"Voce nao possui acesso a esta loja ou possui pendencias.","permission_denied")
+	local Allowed,PermissionCode,PermissionMessage = hasShopPermission(source,Passport,Name)
+	if not Allowed then
+		return result(false,PermissionMessage,PermissionCode or "permission_denied")
 	end
 
 	local NormalizedItem,NormalizedAmount = normalizePurchase(Item,Amount)
@@ -347,9 +421,9 @@ function Lil.CreateQuote(Item,Amount,Name,LocationIndex)
 		return result(false,"Voce nao esta na instancia desta loja.","invalid_route")
 	end
 
-	local ValidLocation,Origin = validateLocation(source,Name,LocationIndex)
+	local ValidLocation,Origin,LocationCode = validateLocation(source,Name,LocationIndex)
 	if not ValidLocation then
-		return result(false,Origin,"invalid_location")
+		return result(false,Origin,LocationCode or "invalid_location")
 	end
 
 	local CanCarry,CarryMessage = validateCarry(Passport,Item,Amount)
@@ -428,9 +502,10 @@ function Lil.ConfirmQuote(Token)
 	end
 
 	local Data = List[Quote.Shop]
-	if not Data or Data.Mode ~= "Buy" or not hasShopPermission(source,Passport,Quote.Shop) then
+	local Allowed,PermissionCode,PermissionMessage = hasShopPermission(source,Passport,Quote.Shop)
+	if not Data or Data.Mode ~= "Buy" or not Allowed then
 		removeQuote(Token)
-		return result(false,"O acesso a esta loja mudou.","permission_denied")
+		return result(false,PermissionMessage or "O acesso a esta loja mudou.",PermissionCode or "permission_denied")
 	end
 
 	local CurrentUnitPrice = Data.List and tonumber(Data.List[Quote.Item])
@@ -439,10 +514,10 @@ function Lil.ConfirmQuote(Token)
 		return result(false,"O preco mudou. Solicite uma nova cotacao.","price_changed")
 	end
 
-	local ValidLocation,LocationMessage = validateLocation(source,Quote.Shop,Quote.Location,Quote.Origin)
+	local ValidLocation,LocationMessage,LocationCode = validateLocation(source,Quote.Shop,Quote.Location,Quote.Origin)
 	if not ValidLocation then
 		removeQuote(Token)
-		return result(false,LocationMessage,"invalid_location")
+		return result(false,LocationMessage,LocationCode or "invalid_location")
 	end
 
 	local CanCarry,CarryMessage = validateCarry(Passport,Quote.Item,Quote.Amount)
