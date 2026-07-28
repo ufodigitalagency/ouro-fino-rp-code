@@ -51,6 +51,10 @@ local function setSaoJudasCraftState(State,Action)
 end
 
 local function resetSaoJudasCraft(State)
+	if State ~= "completed" then
+		TriggerEvent("Progress","",300)
+	end
+
 	local Ped = PlayerPedId()
 	local Settings = saoJudasCraftSettings(SaoJudasCraft.Context)
 	local Animation = Settings and Settings.Animation
