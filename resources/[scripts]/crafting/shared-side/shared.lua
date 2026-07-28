@@ -890,48 +890,11 @@ List = {
 		}
 	},
 	SaoJudasLaboratory = {
+		Transactional = true,
 		Title = "Laboratorio de Sao Judas",
 		Category = "Producao de drogas",
-		ProductionEnabled = false,
-		List = {
-			joint = {
-				Amount = 1,
-				Required = {
-					weed = 1
-				}
-			},
-			cocaine = {
-				Amount = 1,
-				Required = {
-					coke = 1
-				}
-			},
-			meth = {
-				Amount = 5,
-				Required = {
-					saline = 1,
-					sulfuric = 1
-				}
-			},
-			weedsack = {
-				Amount = 1,
-				Required = {
-					joint = 10
-				}
-			},
-			cokesack = {
-				Amount = 1,
-				Required = {
-					cocaine = 10
-				}
-			},
-			methsack = {
-				Amount = 1,
-				Required = {
-					meth = 10
-				}
-			}
-		}
+		ProductionEnabled = SaoJudasOperations.Laboratory.ProductionEnabled,
+		List = SaoJudasOperations.Laboratory.Recipes
 	},
 	SaoJudas = {
 		Permission = "SaoJudas",

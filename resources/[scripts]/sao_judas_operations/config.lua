@@ -111,11 +111,78 @@ SaoJudasOperations = {
 
     Laboratory = {
         Enabled = true,
+        ProductionEnabled = true,
         Coords = vector3(-482.9467,1613.3351,369.3726),
+        PlayerCoords = vector4(-482.9467,1613.3351,369.3726,0.0),
         TargetRadius = 0.65,
         InteractionDistance = 1.5,
         ServerDistance = 2.5,
-        ExclusiveSaoJudasLaboratory = false
+        ExclusiveSaoJudasLaboratory = true,
+        MaximumBatch = 5,
+        QueueCapacity = 1,
+        SessionTimeoutSeconds = 180,
+        Durations = {
+            Processing = 15000,
+            Packaging = 10000
+        },
+        Animation = {
+            Dictionary = "anim@amb@clubhouse@tutorial@bkr_tut_ig3@",
+            Name = "machinic_loop_mechandplayer",
+            Flag = 49
+        },
+        AnimationMonitor = {
+            Enabled = true,
+            StartupGraceMs = 750,
+            MissingGraceMs = 750,
+            CompletionIgnoreWindowMs = 1000,
+            CheckIntervalMs = 150,
+            CompletionToleranceMs = 350
+        },
+        Recipes = {
+            joint = {
+                Amount = 1,
+                DurationKey = "Processing",
+                Required = {
+                    weed = 1
+                }
+            },
+            cocaine = {
+                Amount = 1,
+                DurationKey = "Processing",
+                Required = {
+                    coke = 1
+                }
+            },
+            meth = {
+                Amount = 5,
+                DurationKey = "Processing",
+                Required = {
+                    saline = 1,
+                    sulfuric = 1
+                }
+            },
+            weedsack = {
+                Amount = 1,
+                DurationKey = "Packaging",
+                Required = {
+                    joint = 10
+                }
+            },
+            cokesack = {
+                Amount = 1,
+                DurationKey = "Packaging",
+                Required = {
+                    cocaine = 10
+                }
+            },
+            methsack = {
+                Amount = 1,
+                DurationKey = "Packaging",
+                Required = {
+                    meth = 10
+                }
+            }
+        }
     },
 
     Debug = false

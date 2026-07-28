@@ -12,6 +12,7 @@ vSERVER = Tunnel.getInterface("crafting")
 local Opened = false
 local SaoJudasCraft = {
 	CraftId = nil,
+	Context = nil,
 	State = "idle",
 	StartedAtMs = 0,
 	DurationMs = 0,
@@ -19,13 +20,19 @@ local SaoJudasCraft = {
 	ServerCancelled = false
 }
 
+local function saoJudasCraftSettings(Context)
+	if Context == "laboratory" then return SaoJudasOperations.Laboratory end
+	if Context == "workbench" then return SaoJudasOperations.Workbench end
+end
+
 local function saoJudasCraftDebug(Action)
 	if not SaoJudasOperations.Debug then return end
 
 	local Now = GetGameTimer()
 	local Elapsed = SaoJudasCraft.StartedAtMs > 0 and math.max(0,Now - SaoJudasCraft.StartedAtMs) or 0
 	local Remaining = SaoJudasCraft.DurationMs > 0 and math.max(0,SaoJudasCraft.DurationMs - Elapsed) or 0
-	local Animation = SaoJudasOperations.Workbench.Animation
+	local Settings = saoJudasCraftSettings(SaoJudasCraft.Context)
+	local Animation = Settings and Settings.Animation
 	local Playing = false
 
 	if Animation and SaoJudasCraft.State ~= "idle" then
@@ -45,16 +52,20 @@ end
 
 local function resetSaoJudasCraft(State)
 	local Ped = PlayerPedId()
-	local Animation = SaoJudasOperations.Workbench.Animation
+	local Settings = saoJudasCraftSettings(SaoJudasCraft.Context)
+	local Animation = Settings and Settings.Animation
 
 	saoJudasCraftDebug("animation_cleanup")
-	StopAnimTask(Ped,Animation.Dictionary,Animation.Name,1.0)
-	RemoveAnimDict(Animation.Dictionary)
+	if Animation then
+		StopAnimTask(Ped,Animation.Dictionary,Animation.Name,1.0)
+		RemoveAnimDict(Animation.Dictionary)
+	end
 	FreezeEntityPosition(Ped,false)
 	ClearPedTasks(Ped)
 
 	setSaoJudasCraftState(State or "cancelled","session_cleanup")
 	SaoJudasCraft.CraftId = nil
+	SaoJudasCraft.Context = nil
 	SaoJudasCraft.StartedAtMs = 0
 	SaoJudasCraft.DurationMs = 0
 	SaoJudasCraft.AnimationMissingSince = nil
@@ -116,16 +127,18 @@ end
 
 local function performSaoJudasCraft(Data)
 	local Ped = PlayerPedId()
-	local Workbench = SaoJudasOperations.Workbench
-	local Position = Workbench.PlayerCoords
-	local Animation = Workbench.Animation
-	local Monitor = Workbench.AnimationMonitor or {}
+	local Settings = saoJudasCraftSettings(Data.Context)
+	local Position = Settings and Settings.PlayerCoords
+	local TargetCoords = Data.Context == "laboratory" and Settings and Settings.Coords or Settings and Settings.TargetCoords
+	local Animation = Settings and Settings.Animation
+	local Monitor = Settings and Settings.AnimationMonitor or {}
 	local Duration = tonumber(Data.Duration) or 0
 
 	TriggerEvent("inventory:Close")
 	Wait(250)
 
-	if #(GetEntityCoords(Ped) - Workbench.TargetCoords) > Workbench.ServerDistance then
+	if not Settings or not Position or not TargetCoords or not Animation or Duration <= 0 or
+		#(GetEntityCoords(Ped) - TargetCoords) > Settings.ServerDistance then
 		cancelSaoJudasCraft("client_cancelled")
 		return
 	end
@@ -145,7 +158,7 @@ local function performSaoJudasCraft(Data)
 		return
 	end
 
-	TriggerEvent("Progress","Fabricando "..tostring(Data.Label or "item"),Duration)
+	TriggerEvent("Progress",tostring(Data.Action or "Fabricando").." "..tostring(Data.Label or "item"),Duration)
 	TaskPlayAnim(Ped,Animation.Dictionary,Animation.Name,4.0,-4.0,-1,tonumber(Animation.Flag) or 49,0.0,false,false,false)
 	SaoJudasCraft.StartedAtMs = GetGameTimer()
 	setSaoJudasCraftState("processing","animation_started")
@@ -175,6 +188,11 @@ local function performSaoJudasCraft(Data)
 		end
 
 		if IsPedInAnyVehicle(Ped,false) or IsPedRagdoll(Ped) then
+			CancelReason = "client_cancelled"
+			break
+		end
+
+		if LocalPlayer.state.Safezone or LocalPlayer.state.Handcuff then
 			CancelReason = "client_cancelled"
 			break
 		end
@@ -211,6 +229,7 @@ end
 
 local function startSaoJudasCraft(Result)
 	SaoJudasCraft.CraftId = Result.CraftId
+	SaoJudasCraft.Context = Result.Context
 	SaoJudasCraft.StartedAtMs = GetGameTimer()
 	SaoJudasCraft.DurationMs = tonumber(Result.Duration) or 0
 	SaoJudasCraft.AnimationMissingSince = nil
@@ -265,7 +284,7 @@ end)
 -- TAKE
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterNUICallback("Take",function(Data,Callback)
-	if Opened == "SaoJudas" then
+	if Opened == "SaoJudas" or Opened == "SaoJudasLaboratory" then
 		if SaoJudasCraft.State ~= "idle" then
 			Callback("Ok")
 			return
@@ -295,7 +314,7 @@ RegisterNetEvent("crafting:OpenSaoJudas",function()
 end)
 
 RegisterNetEvent("crafting:OpenSaoJudasLaboratory",function()
-	if not exports.hud:Wanted() then
+	if SaoJudasCraft.State == "idle" and not exports.hud:Wanted() then
 		OpenCrafting("SaoJudasLaboratory")
 	end
 end)

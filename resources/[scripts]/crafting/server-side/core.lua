@@ -14,9 +14,13 @@ Tunnel.bindInterface("crafting",Lil)
 -----------------------------------------------------------------------------------------------------------------------------------------
 local SaoJudasSessions = {}
 local SaoJudasPassportSessions = {}
+local SaoJudasPassportStarting = {}
 local SaoJudasRateLimits = {}
 local SaoJudasPrepared = false
-local SaoJudasStarting = 0
+local SaoJudasStarting = {
+	workbench = 0,
+	laboratory = 0
+}
 local AllowedCancelReasons = {
 	client_cancelled = true,
 	animation_interrupted = true,
@@ -27,8 +31,9 @@ local function craftingLog(Message)
 	print("[saojudas/crafting] "..Message)
 end
 
-local function craftingNotify(source,Message,Color)
-	TriggerClientEvent("Notify",source,"Bancada de Sao Judas",Message,Color or "amarelo",5000)
+local function craftingNotify(source,Context,Message,Color)
+	local Title = Context == "laboratory" and "Laboratorio de Sao Judas" or "Bancada de Sao Judas"
+	TriggerClientEvent("Notify",source,Title,Message,Color or "amarelo",5000)
 end
 
 local function strictInteger(Value)
@@ -80,14 +85,89 @@ local function saoJudasRateAllowed(source,Key,Interval)
 	return true
 end
 
-local function saoJudasActiveSessions()
+local function saoJudasActiveSessions(Context)
 	local Amount = 0
-	for _ in pairs(SaoJudasSessions) do Amount = Amount + 1 end
+	for _,Session in pairs(SaoJudasSessions) do
+		if not Context or Session.Context == Context then Amount = Amount + 1 end
+	end
 	return Amount
 end
 
-local function saoJudasContext(source,Passport)
-	if not Passport or not exports.sao_judas_operations:CanUseWorkbench(Passport) then
+local function contextSettings(Context)
+	if Context == "workbench" then return SaoJudasOperations.Workbench end
+	if Context == "laboratory" then return SaoJudasOperations.Laboratory end
+end
+
+local function resolveCraftContext(Name,Item)
+	local Context
+	if Name == "SaoJudas" then
+		Context = "workbench"
+	elseif Name == "SaoJudasLaboratory" then
+		Context = "laboratory"
+	else
+		return nil
+	end
+
+	local Settings = contextSettings(Context)
+	local Recipes = Settings and Settings.Recipes
+	local Recipe = type(Item) == "string" and Recipes and Recipes[Item]
+	if type(Recipe) ~= "table" or not strictInteger(Recipe.Amount) or type(Recipe.Required) ~= "table" then
+		return nil
+	end
+
+	local Requirements = 0
+	for Required,Multiplier in pairs(Recipe.Required) do
+		if type(Required) ~= "string" or not strictInteger(Multiplier) then return nil end
+		Requirements = Requirements + 1
+	end
+	if Requirements == 0 then return nil end
+
+	return {
+		Key = Context,
+		Name = Name,
+		Settings = Settings,
+		Recipe = Recipe,
+		RecipeKey = Context == "laboratory" and "laboratory:"..Item or Item
+	}
+end
+
+local function recipeDuration(Settings,Recipe)
+	local Duration = tonumber(Recipe and Recipe.Duration)
+	if not Duration and Recipe and Recipe.DurationKey and type(Settings.Durations) == "table" then
+		Duration = tonumber(Settings.Durations[Recipe.DurationKey])
+	end
+
+	if not Duration or Duration <= 0 or Duration ~= math.floor(Duration) then return nil end
+	return Duration
+end
+
+local function saoJudasContext(source,Passport,Context,AllowBusy,SkipRoleCache)
+	if not Passport then return false,"invalid_passport" end
+
+	if Context == "laboratory" then
+		local Laboratory = SaoJudasOperations.Laboratory
+		if not Laboratory.Enabled then return false,"laboratory_disabled" end
+		if Laboratory.ProductionEnabled ~= true then return false,"production_disabled" end
+		if Laboratory.ExclusiveSaoJudasLaboratory ~= true then return false,"catalog_not_exclusive" end
+		if not exports.sao_judas_operations:IsMember(Passport) then return false,"not_member" end
+		if not exports.sao_judas_operations:CanUseLaboratory(Passport,SkipRoleCache == true) then
+			return false,"permission_lost"
+		end
+		if not exports.sao_judas_operations:AtLaboratory(source) then return false,"too_far" end
+
+		local Ped = GetPlayerPed(source)
+		if Ped <= 0 or GetEntityHealth(Ped) <= 100 then return false,"player_dead" end
+		if vRP.InsideVehicle(source) then return false,"player_in_vehicle" end
+		if Player(source).state.Safezone then return false,"safezone" end
+		if Player(source).state.Handcuff then return false,"player_handcuffed" end
+		if not AllowBusy and Player(source).state.Buttons then return false,"player_busy" end
+		if GetPlayerRoutingBucket(source) ~= 0 then return false,"routing_bucket_blocked" end
+		return true
+	end
+
+	if Context ~= "workbench" or not SaoJudasOperations.Workbench.Enabled or
+		SaoJudasOperations.Workbench.RecipesEnabled ~= true or
+		not exports.sao_judas_operations:CanUseWorkbench(Passport) then
 		return false,"permission_lost"
 	end
 
@@ -101,6 +181,58 @@ local function saoJudasContext(source,Passport)
 	end
 
 	return true
+end
+
+local function reservedMatchesRecipe(Session,Recipe)
+	local Expected = {}
+	for Item,Multiplier in pairs(Recipe.Required or {}) do
+		local NumericMultiplier = tonumber(Multiplier)
+		local Amount = NumericMultiplier and NumericMultiplier * Session.Quantity
+		if not Amount or Amount <= 0 or Amount ~= math.floor(Amount) then return false end
+		Expected[Item] = Amount
+	end
+
+	local Seen = {}
+	for _,Material in ipairs(Session.Reserved or {}) do
+		if type(Material.Base) ~= "string" or type(Material.Item) ~= "string" or
+			type(Material.Slot) ~= "string" or Seen[Material.Base] or
+			Expected[Material.Base] ~= Material.Amount then
+			return false
+		end
+		Seen[Material.Base] = true
+	end
+
+	for Item in pairs(Expected) do
+		if not Seen[Item] then return false end
+	end
+	return true
+end
+
+local function inventoryItemAmount(Passport,Item)
+	local Amount = 0
+	for _,Entry in pairs(vRP.Inventory(Passport)) do
+		if Entry.item == Item then Amount = Amount + Entry.amount end
+	end
+	return Amount
+end
+
+local function inventorySlotBaseAmount(Passport,Item,Slot)
+	local Entry = vRP.Inventory(Passport)[tostring(Slot)]
+	return Entry and SplitOne(Entry.item) == SplitOne(Item) and Entry.amount or 0
+end
+
+local function refundMaterials(Passport,Materials)
+	local Failed = {}
+	for _,Material in ipairs(Materials) do
+		local Before = inventoryItemAmount(Passport,Material.Item)
+		local Ok = pcall(function()
+			vRP.GiveItem(Passport,Material.Item,Material.Amount,false,Material.Slot)
+		end)
+		local Refunded = inventoryItemAmount(Passport,Material.Item) - Before
+		if not Ok or Refunded ~= Material.Amount then Failed[#Failed + 1] = Material.Item end
+	end
+
+	return #Failed == 0,table.concat(Failed,",")
 end
 
 local function updateCraftStatus(CraftId,Status,Reason)
@@ -131,15 +263,15 @@ local function releaseSaoJudasSession(Session,Status,Reason,NotifyPlayer)
 	end
 
 	local CurrentSource = vRP.Source(Session.Passport)
-	if CurrentSource then
+	if CurrentSource == Session.Source then
 		Player(CurrentSource).state.Buttons = false
 		TriggerClientEvent("crafting:SaoJudasCancelled",CurrentSource,Session.CraftId)
-		if NotifyPlayer then craftingNotify(CurrentSource,NotifyPlayer,"vermelho") end
+		if NotifyPlayer then craftingNotify(CurrentSource,Session.Context,NotifyPlayer,"vermelho") end
 	end
 
 	updateCraftStatus(Session.CraftId,Status,Reason)
-	craftingLog(("craftId=%s passport=%s recipe=%s quantity=%s status=%s reason=%s"):format(
-		Session.CraftId,Session.Passport,Session.Item,Session.Quantity,Status,tostring(Reason)
+	craftingLog(("craftId=%s passport=%s context=%s recipe=%s quantity=%s status=%s reason=%s"):format(
+		Session.CraftId,Session.Passport,Session.Context,Session.Item,Session.Quantity,Status,tostring(Reason)
 	))
 end
 
@@ -245,7 +377,7 @@ function Lil.Permission(Name)
     end
 
 	if Name == "SaoJudas" then
-		local Allowed = saoJudasContext(source,Passport)
+		local Allowed = saoJudasContext(source,Passport,"workbench")
 		return Allowed
 	end
 
@@ -258,7 +390,7 @@ end
 function Lil.Mount(Name)
 	local source = source
 	local Passport = vRP.Passport(source)
-	if Name == "SaoJudas" and not saoJudasContext(source,Passport) then
+	if Name == "SaoJudas" and not saoJudasContext(source,Passport,"workbench") then
 		return false
 	end
 	if Name == "SaoJudasLaboratory" and not exports.sao_judas_operations:CanAccessLaboratory(source) then
@@ -326,12 +458,7 @@ function Lil.Take(Item,Amount,Target,Name)
 		return false
 	end
 
-	if Name == "SaoJudas" then
-		return false
-	end
-
-	if Name == "SaoJudasLaboratory" then
-		TriggerClientEvent("Notify",source,"Laboratório de São Judas","A producao do laboratorio ainda esta sendo preparada.","amarelo",5000)
+	if Name == "SaoJudas" or Name == "SaoJudasLaboratory" then
 		return false
 	end
 
@@ -387,73 +514,96 @@ end
 function Lil.StartSaoJudas(Item,Amount,Target,Name)
 	local source = source
 	local Passport = vRP.Passport(source)
-	local Workbench = SaoJudasOperations.Workbench
-	local Recipe = Name == "SaoJudas" and Workbench.Recipes[Item]
+	local Context = resolveCraftContext(Name,Item)
+	local Settings = Context and Context.Settings
+	local Recipe = Context and Context.Recipe
 
-	if not Recipe or not Passport or not saoJudasRateAllowed(source,"start",1000) then
+	if not Context or not Passport or not saoJudasRateAllowed(source,"start:"..Context.Key,1000) then
 		return false
 	end
 
-	local Allowed,Reason = saoJudasContext(source,Passport)
+	local Allowed,Reason = saoJudasContext(source,Passport,Context.Key,false,Context.Key == "laboratory")
 	if not Allowed then
-		craftingNotify(source,"Voce nao esta autorizado a utilizar a bancada de Sao Judas.","vermelho")
+		craftingNotify(source,Context.Key,"Voce nao esta autorizado a iniciar esta producao.","vermelho")
+		craftingLog(("passport=%s context=%s recipe=%s status=rejected reason=%s"):format(
+			Passport,Context.Key,tostring(Item),tostring(Reason)
+		))
 		return false
 	end
 
-	if SaoJudasPassportSessions[Passport] then
-		craftingNotify(source,"Voce ja possui uma fabricacao em andamento.","vermelho")
+	if SaoJudasPassportSessions[Passport] or SaoJudasPassportStarting[Passport] then
+		craftingNotify(source,Context.Key,"Voce ja possui uma fabricacao em andamento.","vermelho")
 		return false
 	end
 
-
-	if saoJudasActiveSessions() + SaoJudasStarting >= Workbench.QueueCapacity then
-		craftingNotify(source,"A bancada esta sendo utilizada por outro operador.","vermelho")
+	local QueueCapacity = strictInteger(Settings.QueueCapacity) or 1
+	if saoJudasActiveSessions(Context.Key) + (SaoJudasStarting[Context.Key] or 0) >= QueueCapacity then
+		craftingNotify(source,Context.Key,"Este ponto de producao esta sendo utilizado por outro operador.","vermelho")
 		return false
 	end
 
 	local Quantity = strictInteger(Amount)
-	local Maximum = math.min(Workbench.MaximumBatch,Recipe.MaximumBatch or Workbench.MaximumBatch)
+	local ConfiguredMaximum = strictInteger(Settings.MaximumBatch) or 1
+	local RecipeMaximum = strictInteger(Recipe.MaximumBatch) or ConfiguredMaximum
+	local Maximum = math.min(ConfiguredMaximum,RecipeMaximum)
 	if not Quantity or Quantity > Maximum then
-		craftingNotify(source,("Escolha uma quantidade entre 1 e %s."):format(Maximum),"vermelho")
+		craftingNotify(source,Context.Key,("Escolha uma quantidade entre 1 e %s."):format(Maximum),"vermelho")
 		return false
 	end
 
-	if Item == "dismantle" and dismantleDailyAmount(Passport) + Quantity > Workbench.DismantleDailyLimit then
-		craftingNotify(source,("O limite diario deste item e %s unidades."):format(Workbench.DismantleDailyLimit),"vermelho")
+	if Context.Key == "workbench" and Item == "dismantle" and
+		dismantleDailyAmount(Passport) + Quantity > Settings.DismantleDailyLimit then
+		craftingNotify(source,Context.Key,("O limite diario deste item e %s unidades."):format(Settings.DismantleDailyLimit),"vermelho")
 		return false
 	end
 
 	local OutputAmount = Recipe.Amount * Quantity
 	if not exports.vrp:ItemExist(Item) or vRP.MaxItens(Passport,Item,OutputAmount) then
-		craftingNotify(source,"Voce atingiu o limite deste item.","vermelho")
+		craftingNotify(source,Context.Key,"Voce atingiu o limite deste item.","vermelho")
 		return false
 	end
 
 	local Reserved,MissingItem,MissingAmount = reservedMaterials(Passport,Recipe,Quantity)
 	if not Reserved then
-		craftingNotify(source,("Precisa de <b>%sx %s</b>."):format(Dotted(MissingAmount),exports.vrp:ItemName(MissingItem)),"vermelho")
+		craftingNotify(source,Context.Key,("Precisa de <b>%sx %s</b>."):format(Dotted(MissingAmount),exports.vrp:ItemName(MissingItem)),"vermelho")
 		return false
 	end
 
 	if not projectedWeightAllowed(Passport,Item,OutputAmount,Reserved) then
-		craftingNotify(source,"Voce nao possui espaco suficiente no inventario.","vermelho")
+		craftingNotify(source,Context.Key,"Voce nao possui espaco suficiente no inventario.","vermelho")
 		return false
 	end
 
 	local OutputSlot = resultSlot(Passport,Item,Reserved,Target)
 	if not OutputSlot then
-		craftingNotify(source,"Voce nao possui um slot livre para o resultado.","vermelho")
+		craftingNotify(source,Context.Key,"Voce nao possui um slot livre para o resultado.","vermelho")
 		return false
 	end
 
-	if saoJudasActiveSessions() + SaoJudasStarting >= Workbench.QueueCapacity then
-		craftingNotify(source,"A bancada esta sendo utilizada por outro operador.","vermelho")
+	if SaoJudasPassportSessions[Passport] or SaoJudasPassportStarting[Passport] then
+		craftingNotify(source,Context.Key,"Voce ja possui uma fabricacao em andamento.","vermelho")
 		return false
 	end
 
-	SaoJudasStarting = SaoJudasStarting + 1
-	local CraftId = ("SJ-%s-%s-%s"):format(Passport,os.time(),GenerateString("DDLLDD"))
-	local Duration = Recipe.Duration * Quantity
+	if saoJudasActiveSessions(Context.Key) + (SaoJudasStarting[Context.Key] or 0) >= QueueCapacity then
+		craftingNotify(source,Context.Key,"Este ponto de producao esta sendo utilizado por outro operador.","vermelho")
+		return false
+	end
+
+	local UnitDuration = recipeDuration(Settings,Recipe)
+	if not UnitDuration then
+		craftingNotify(source,Context.Key,"Esta receita esta temporariamente indisponivel.","vermelho")
+		craftingLog(("passport=%s context=%s recipe=%s status=rejected reason=invalid_server_duration"):format(
+			Passport,Context.Key,Item
+		))
+		return false
+	end
+
+	SaoJudasPassportStarting[Passport] = true
+	SaoJudasStarting[Context.Key] = (SaoJudasStarting[Context.Key] or 0) + 1
+	local Prefix = Context.Key == "laboratory" and "SJL" or "SJ"
+	local CraftId = ("%s-%s-%s-%s"):format(Prefix,Passport,os.time(),GenerateString("DDLLDD"))
+	local Duration = UnitDuration * Quantity
 	local StartedAt = os.time()
 	local ReadyAt = StartedAt + math.ceil(Duration / 1000)
 	local MaterialsJson = json.encode(Reserved)
@@ -464,18 +614,19 @@ function Lil.StartSaoJudas(Item,Amount,Target,Name)
 		return exports.oxmysql:update_async([[INSERT INTO sao_judas_crafts
 			(CraftId,Passport,Recipe,Quantity,OutputAmount,Materials,Status,StartedAt,ReadyAt)
 			VALUES (?,?,?,?,?,?,?,?,?)]],{
-			CraftId,Passport,Item,Quantity,OutputAmount,MaterialsJson,"processing",StartedAt,ReadyAt
+			CraftId,Passport,Context.RecipeKey,Quantity,OutputAmount,MaterialsJson,"processing",StartedAt,ReadyAt
 		})
 	end)
-	SaoJudasStarting = math.max(0,SaoJudasStarting - 1)
 	local AffectedRows = DatabaseOk and tonumber(DatabaseResult) or nil
 
 	if not DatabaseOk or AffectedRows ~= 1 then
-		craftingLog(("passport=%s recipe=%s craftId=%s quantity=%s materialsJsonBytes=%s prepared=%s status=rejected reason=database_insert_failed databaseOk=%s affectedRows=%s returnType=%s sqlError=%s"):format(
-			Passport,Item,CraftId,Quantity,#MaterialsJson,tostring(SaoJudasPrepared),tostring(DatabaseOk),
+		SaoJudasStarting[Context.Key] = math.max(0,(SaoJudasStarting[Context.Key] or 1) - 1)
+		SaoJudasPassportStarting[Passport] = nil
+		craftingLog(("passport=%s context=%s recipe=%s craftId=%s quantity=%s materialsJsonBytes=%s prepared=%s status=rejected reason=database_insert_failed databaseOk=%s affectedRows=%s returnType=%s sqlError=%s"):format(
+			Passport,Context.Key,Context.RecipeKey,CraftId,Quantity,#MaterialsJson,tostring(SaoJudasPrepared),tostring(DatabaseOk),
 			tostring(AffectedRows),type(DatabaseResult),DatabaseOk and "none" or tostring(DatabaseResult)
 		))
-		craftingNotify(source,"A bancada esta temporariamente indisponivel. Tente novamente em instantes.","vermelho")
+		craftingNotify(source,Context.Key,"Este ponto esta temporariamente indisponivel. Tente novamente em instantes.","vermelho")
 		return false
 	end
 
@@ -488,10 +639,30 @@ function Lil.StartSaoJudas(Item,Amount,Target,Name)
 		))
 	end
 
+	local CurrentPassport = vRP.Passport(source)
+	local StillAllowed,StartReason = false,"passport_changed"
+	if CurrentPassport == Passport then
+		StillAllowed,StartReason = saoJudasContext(
+			source,Passport,Context.Key,false,Context.Key == "laboratory"
+		)
+	end
+	if not StillAllowed or SaoJudasPassportSessions[Passport] then
+		SaoJudasStarting[Context.Key] = math.max(0,(SaoJudasStarting[Context.Key] or 1) - 1)
+		SaoJudasPassportStarting[Passport] = nil
+		updateCraftStatus(CraftId,"cancelled",StartReason or "session_conflict")
+		craftingLog(("craftId=%s passport=%s context=%s status=cancelled reason=%s"):format(
+			CraftId,Passport,Context.Key,tostring(StartReason or "session_conflict")
+		))
+		return false
+	end
+
 	local Session = {
 		CraftId = CraftId,
 		Source = source,
 		Passport = Passport,
+		Context = Context.Key,
+		Name = Context.Name,
+		RecipeKey = Context.RecipeKey,
 		Item = Item,
 		Quantity = Quantity,
 		OutputAmount = OutputAmount,
@@ -500,22 +671,26 @@ function Lil.StartSaoJudas(Item,Amount,Target,Name)
 		StartedAt = StartedAt,
 		ReadyAt = ReadyAt,
 		ReadyAtMs = GetGameTimer() + Duration,
-		ExpiresAt = StartedAt + Workbench.SessionTimeoutSeconds,
+		ExpiresAt = StartedAt + (strictInteger(Settings.SessionTimeoutSeconds) or 120),
 		State = "processing"
 	}
 
 	SaoJudasSessions[CraftId] = Session
 	SaoJudasPassportSessions[Passport] = CraftId
+	SaoJudasStarting[Context.Key] = math.max(0,(SaoJudasStarting[Context.Key] or 1) - 1)
+	SaoJudasPassportStarting[Passport] = nil
 	Player(source).state.Buttons = true
 
-	craftingLog(("craftId=%s passport=%s recipe=%s quantity=%s materials=%s status=processing"):format(
-		CraftId,Passport,Item,Quantity,json.encode(Reserved)
+	craftingLog(("craftId=%s passport=%s context=%s recipe=%s quantity=%s materials=%s status=processing"):format(
+		CraftId,Passport,Context.Key,Context.RecipeKey,Quantity,json.encode(Reserved)
 	))
 
 	return {
 		Success = true,
 		CraftId = CraftId,
+		Context = Context.Key,
 		Duration = Duration,
+		Action = Context.Key == "laboratory" and (Recipe.DurationKey == "Packaging" and "Empacotando" or "Processando") or "Fabricando",
 		Label = exports.vrp:ItemName(Item)
 	}
 end
@@ -532,10 +707,13 @@ local function completeSaoJudasSession(source,Passport,Session)
 		return { Success = false, Status = "processing", Reason = "completion_in_progress" }
 	end
 
-	local Monitor = SaoJudasOperations.Workbench.AnimationMonitor or {}
+	local Settings = contextSettings(Session.Context)
+	local Monitor = Settings and Settings.AnimationMonitor or {}
 	local CompletionTolerance = tonumber(Monitor.CompletionToleranceMs) or 350
 	if GetGameTimer() + CompletionTolerance < Session.ReadyAtMs then
-		craftingLog(("craftId=%s passport=%s status=rejected reason=early_completion"):format(Session.CraftId,Passport))
+		craftingLog(("craftId=%s passport=%s context=%s status=rejected reason=early_completion"):format(
+			Session.CraftId,Passport,tostring(Session.Context)
+		))
 		return {
 			Success = false,
 			Status = "rejected",
@@ -544,20 +722,30 @@ local function completeSaoJudasSession(source,Passport,Session)
 		}
 	end
 
-	local Allowed,Reason = saoJudasContext(source,Passport)
+	Session.Busy = true
+	Session.State = "completing"
+
+	local Allowed,Reason = saoJudasContext(source,Passport,Session.Context,true,Session.Context == "laboratory")
+	if Session.Released then
+		return { Success = false, Status = "missing", Reason = "session_missing" }
+	end
 	if not Allowed then
 		releaseSaoJudasSession(Session,"cancelled",Reason,"A fabricacao foi cancelada.")
 		return { Success = false, Status = "cancelled", Reason = Reason }
 	end
 
-	local Recipe = SaoJudasOperations.Workbench.Recipes[Session.Item]
-	if not Recipe then
+	local Context = resolveCraftContext(Session.Name,Session.Item)
+	local Recipe = Context and Context.Recipe
+	local ConfiguredMaximum = Settings and strictInteger(Settings.MaximumBatch) or nil
+	local RecipeMaximum = Recipe and strictInteger(Recipe.MaximumBatch) or ConfiguredMaximum
+	local Maximum = ConfiguredMaximum and math.min(ConfiguredMaximum,RecipeMaximum or ConfiguredMaximum) or 0
+	if not Context or Context.Key ~= Session.Context or Context.RecipeKey ~= Session.RecipeKey or
+		not Recipe or not strictInteger(Session.Quantity) or Session.Quantity > Maximum or
+		Session.OutputAmount ~= Recipe.Amount * Session.Quantity or not reservedMatchesRecipe(Session,Recipe) then
 		releaseSaoJudasSession(Session,"failed","recipe_missing","A receita nao esta mais disponivel.")
 		return { Success = false, Status = "failed", Reason = "recipe_missing" }
 	end
 
-	Session.Busy = true
-	Session.State = "completing"
 	for _,Material in ipairs(Session.Reserved) do
 		local Inventory = vRP.Inventory(Passport)
 		local Entry = Inventory[Material.Slot]
@@ -568,28 +756,68 @@ local function completeSaoJudasSession(source,Passport,Session)
 		end
 	end
 
-	if not projectedWeightAllowed(Passport,Session.Item,Session.OutputAmount,Session.Reserved) then
-		Session.Busy = false
+	if vRP.MaxItens(Passport,Session.Item,Session.OutputAmount) or
+		not projectedWeightAllowed(Passport,Session.Item,Session.OutputAmount,Session.Reserved) then
 		releaseSaoJudasSession(Session,"cancelled","weight_changed","Voce nao possui espaco suficiente no inventario.")
 		return { Success = false, Status = "cancelled", Reason = "weight_changed" }
 	end
+
+	local OutputSlot = resultSlot(Passport,Session.Item,Session.Reserved,Session.OutputSlot)
+	if not OutputSlot then
+		releaseSaoJudasSession(Session,"cancelled","output_slot_changed","Voce nao possui um slot livre para o resultado.")
+		return { Success = false, Status = "cancelled", Reason = "output_slot_changed" }
+	end
+	Session.OutputSlot = OutputSlot
 
 	local Removed = {}
 	for _,Material in ipairs(Session.Reserved) do
 		if vRP.TakeItem(Passport,Material.Item,Material.Amount,false,Material.Slot) then
 			Removed[#Removed + 1] = Material
 		else
-			for _,Refund in ipairs(Removed) do
-				vRP.GiveItem(Passport,Refund.Item,Refund.Amount,false,Refund.Slot)
-			end
-
-			Session.Busy = false
-			releaseSaoJudasSession(Session,"refunded","material_remove_failed","Nao foi possivel concluir. Os materiais foram preservados.")
-			return { Success = false, Status = "refunded", Reason = "material_remove_failed" }
+			local Refunded,RefundItem = refundMaterials(Passport,Removed)
+			local Status = Refunded and "refunded" or "recovery_required"
+			local FailureReason = Refunded and "material_remove_failed" or "material_refund_failed"
+			craftingLog(("craftId=%s passport=%s context=%s status=%s reason=%s refundItem=%s removed=%s"):format(
+				Session.CraftId,Passport,Session.Context,Status,FailureReason,tostring(RefundItem),json.encode(Removed)
+			))
+			local Message = Refunded and "Nao foi possivel concluir. Os materiais foram preservados." or
+				"A producao entrou em recuperacao segura. Avise a administracao com o codigo "..Session.CraftId.."."
+			releaseSaoJudasSession(Session,Status,FailureReason,Message)
+			return { Success = false, Status = Status, Reason = FailureReason }
 		end
 	end
 
-	vRP.GenerateItem(Passport,Session.Item,Session.OutputAmount,true,Session.OutputSlot)
+	local BeforeOutput = inventorySlotBaseAmount(Passport,Session.Item,Session.OutputSlot)
+	local DeliveryOk,DeliveryError = pcall(function()
+		if Session.Context == "laboratory" then
+			vRP.GiveItem(Passport,Session.Item,Session.OutputAmount,false,Session.OutputSlot)
+		else
+			vRP.GenerateItem(Passport,Session.Item,Session.OutputAmount,false,Session.OutputSlot)
+		end
+	end)
+	local OutputEntry = vRP.Inventory(Passport)[tostring(Session.OutputSlot)]
+	local DeliveredAmount = inventorySlotBaseAmount(Passport,Session.Item,Session.OutputSlot) - BeforeOutput
+	if not DeliveryOk or DeliveredAmount ~= Session.OutputAmount then
+		local OutputRolledBack = DeliveredAmount <= 0
+		if DeliveredAmount > 0 and OutputEntry and SplitOne(OutputEntry.item) == SplitOne(Session.Item) then
+			OutputRolledBack = vRP.TakeItem(Passport,OutputEntry.item,DeliveredAmount,false,Session.OutputSlot) and
+				inventorySlotBaseAmount(Passport,Session.Item,Session.OutputSlot) == BeforeOutput
+		end
+
+		local Refunded,RefundItem = false,"output_not_rolled_back"
+		if OutputRolledBack then Refunded,RefundItem = refundMaterials(Passport,Removed) end
+		local Status = Refunded and "refunded" or "recovery_required"
+		local FailureReason = Refunded and "output_delivery_failed" or "delivery_rollback_failed"
+		craftingLog(("craftId=%s passport=%s context=%s status=%s reason=%s deliveryError=%s delivered=%s outputRolledBack=%s refundItem=%s removed=%s"):format(
+			Session.CraftId,Passport,Session.Context,Status,FailureReason,tostring(DeliveryError),
+			DeliveredAmount,tostring(OutputRolledBack),tostring(RefundItem),json.encode(Removed)
+		))
+		local Message = Refunded and "A entrega falhou e os materiais foram devolvidos integralmente." or
+			"A producao entrou em recuperacao segura. Avise a administracao com o codigo "..Session.CraftId.."."
+		releaseSaoJudasSession(Session,Status,FailureReason,Message)
+		return { Success = false, Status = Status, Reason = FailureReason }
+	end
+
 	TriggerClientEvent("inventory:Update",source)
 	Player(source).state.Buttons = false
 
@@ -597,11 +825,16 @@ local function completeSaoJudasSession(source,Passport,Session)
 	SaoJudasPassportSessions[Passport] = nil
 	Session.Released = true
 	Session.State = "completed"
-	updateCraftStatus(Session.CraftId,"completed")
+	local StatusUpdated = updateCraftStatus(Session.CraftId,"completed")
+	if not StatusUpdated then
+		craftingLog(("craftId=%s passport=%s context=%s status=completed reason=status_update_failed"):format(
+			Session.CraftId,Passport,Session.Context
+		))
+	end
 
-	craftingNotify(source,("Fabricacao concluida: <b>%sx %s</b>."):format(Session.OutputAmount,exports.vrp:ItemName(Session.Item)),"verde")
-	craftingLog(("craftId=%s passport=%s recipe=%s quantity=%s output=%s status=completed duration=%s"):format(
-		Session.CraftId,Passport,Session.Item,Session.Quantity,Session.OutputAmount,os.time() - Session.StartedAt
+	craftingNotify(source,Session.Context,("Fabricacao concluida: <b>%sx %s</b>."):format(Session.OutputAmount,exports.vrp:ItemName(Session.Item)),"verde")
+	craftingLog(("craftId=%s passport=%s context=%s recipe=%s quantity=%s output=%s status=completed duration=%s"):format(
+		Session.CraftId,Passport,Session.Context,Session.RecipeKey,Session.Quantity,Session.OutputAmount,os.time() - Session.StartedAt
 	))
 
 	return { Success = true, Status = "completed", CraftId = Session.CraftId }
@@ -643,7 +876,8 @@ function Lil.CancelSaoJudas(CraftId,Reason)
 		return { Success = false, Status = "processing", Reason = "completion_in_progress" }
 	end
 
-	local Monitor = SaoJudasOperations.Workbench.AnimationMonitor or {}
+	local Settings = contextSettings(Session.Context)
+	local Monitor = Settings and Settings.AnimationMonitor or {}
 	local CompletionTolerance = tonumber(Monitor.CompletionToleranceMs) or 350
 	if Reason == "animation_interrupted" and GetGameTimer() + CompletionTolerance >= Session.ReadyAtMs then
 		craftingLog(("craftId=%s passport=%s status=rejected reason=ready_to_complete cancelReason=%s"):format(
@@ -704,8 +938,13 @@ CreateThread(function()
 		local Cancel = {}
 		for _,Session in pairs(SaoJudasSessions) do
 			local CurrentSource = vRP.Source(Session.Passport)
-			local Allowed,Reason = CurrentSource and saoJudasContext(CurrentSource,Session.Passport)
-			if not CurrentSource then
+			local Allowed,Reason = false,"player_dropped"
+			if CurrentSource == Session.Source then
+				Allowed,Reason = saoJudasContext(
+					CurrentSource,Session.Passport,Session.Context,true,Session.Context == "laboratory"
+				)
+			end
+			if not CurrentSource or CurrentSource ~= Session.Source then
 				Cancel[#Cancel + 1] = { Session = Session, Reason = "player_dropped" }
 			elseif not Allowed then
 				Cancel[#Cancel + 1] = { Session = Session, Reason = Reason }
@@ -746,7 +985,7 @@ AddEventHandler("onResourceStop",function(Resource)
 			releaseSaoJudasSession(Session,"cancelled","dependency_stop","A fabricacao foi cancelada.")
 		else
 			local CurrentSource = vRP.Source(Session.Passport)
-			if CurrentSource then Player(CurrentSource).state.Buttons = false end
+			if CurrentSource == Session.Source then Player(CurrentSource).state.Buttons = false end
 			updateCraftStatus(Session.CraftId,"cancelled","resource_stop")
 		end
 	end
@@ -764,7 +1003,7 @@ RegisterCommand("saojudas_crafting_debug",function(source)
 		tostring(source > 0 and exports.sao_judas_operations:AtWorkbench(source) or false),
 		tostring(Passport and exports.sao_judas_operations:IsLeader(Passport) or false),
 		tostring(Passport and exports.sao_judas_operations:CanUseWorkbench(Passport) or false),
-		tostring(saoJudasActiveSessions() + SaoJudasStarting),tostring(SaoJudasOperations.Workbench.QueueCapacity),
+		tostring(saoJudasActiveSessions("workbench") + (SaoJudasStarting.workbench or 0)),tostring(SaoJudasOperations.Workbench.QueueCapacity),
 		tostring(Session and Session.CraftId),tostring(Session and "processing" or "idle")
 	))
 end,false)
