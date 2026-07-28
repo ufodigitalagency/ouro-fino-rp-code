@@ -8,6 +8,10 @@ local VaultLock = false
 local RateLimits = {}
 local DistributionRoleCache = {}
 local LaboratoryRoleCache = {}
+local SulfuricPassportLocks = {}
+local SulfuricOrganizationLock = nil
+local SulfuricLockSequence = 0
+local SulfuricCooldownUntil = 0
 
 local function log(message)
     print("[saojudas/operations] "..message)
@@ -221,6 +225,141 @@ local function canAccessLaboratory(source)
     if not atLaboratory(source) then return false,"too_far" end
 
     return true,"ok"
+end
+
+local function suppliesLog(message)
+    print("[saojudas/supplies] "..message)
+end
+
+local function supplierCooldownRemaining()
+    return math.max(0,SulfuricCooldownUntil - os.time())
+end
+
+local function friendlyDuration(seconds)
+    seconds = math.max(0,tonumber(seconds) or 0)
+    local minutes = math.floor(seconds / 60)
+    local remainingSeconds = math.floor(seconds % 60)
+    if minutes > 0 and remainingSeconds > 0 then
+        return ("%s min e %s s"):format(minutes,remainingSeconds)
+    elseif minutes > 0 then
+        return ("%s min"):format(minutes)
+    end
+    return ("%s s"):format(remainingSeconds)
+end
+
+local function validateSulfuricSupplierAccess(source,skipRoleCache)
+    local supplier = SaoJudasOperations.SulfuricSupplier
+    if not supplier or not supplier.Enabled then return nil,"supplier_disabled" end
+
+    local Passport = vRP.Passport(source)
+    if not Passport then return nil,"invalid_passport" end
+    if not isMember(Passport) then return nil,"not_member" end
+    if not canUseLaboratory(Passport,skipRoleCache == true) then return nil,"role_missing" end
+    if GetPlayerRoutingBucket(source) ~= 0 then return nil,"routing_bucket_blocked" end
+
+    local ped = GetPlayerPed(source)
+    if not ped or ped == 0 then return nil,"player_not_found" end
+    if GetEntityHealth(ped) <= 100 then return nil,"player_dead" end
+    if vRP.InsideVehicle(source) then return nil,"player_in_vehicle" end
+    if Player(source).state.Safezone then return nil,"safezone" end
+    if Player(source).state.Handcuff then return nil,"player_handcuffed" end
+    if not atLocation(source,supplier.Coords,supplier.ServerDistance) then return nil,"too_far" end
+
+    return Passport,"ok"
+end
+
+local function clearExpiredSulfuricLock()
+    local lock = SulfuricOrganizationLock
+    if lock and lock.ExpiresAt < os.time() then
+        if SulfuricPassportLocks[lock.Passport] == lock then
+            SulfuricPassportLocks[lock.Passport] = nil
+        end
+        SulfuricOrganizationLock = nil
+    end
+end
+
+local function acquireSulfuricLock(source,Passport)
+    clearExpiredSulfuricLock()
+    if SulfuricPassportLocks[Passport] then return nil,"purchase_in_progress" end
+    if SulfuricOrganizationLock then return nil,"supplier_busy" end
+
+    SulfuricLockSequence = SulfuricLockSequence + 1
+    local lock = {
+        Token = ("%s:%s:%s"):format(Passport,GetGameTimer(),SulfuricLockSequence),
+        Source = source,
+        Passport = Passport,
+        ExpiresAt = os.time() + (tonumber(SaoJudasOperations.SulfuricSupplier.LockTimeoutSeconds) or 90)
+    }
+    SulfuricPassportLocks[Passport] = lock
+    SulfuricOrganizationLock = lock
+    return lock
+end
+
+local function sulfuricLockActive(lock)
+    clearExpiredSulfuricLock()
+    return lock and SulfuricOrganizationLock == lock and SulfuricPassportLocks[lock.Passport] == lock
+end
+
+local function releaseSulfuricLock(lock)
+    if not lock then return end
+    if SulfuricPassportLocks[lock.Passport] == lock then SulfuricPassportLocks[lock.Passport] = nil end
+    if SulfuricOrganizationLock == lock then SulfuricOrganizationLock = nil end
+end
+
+local function inventoryExactAmount(Passport,Item)
+    local amount = 0
+    for _,entry in pairs(vRP.Inventory(Passport)) do
+        if entry.item == Item then amount = amount + entry.amount end
+    end
+    return amount
+end
+
+local function inventorySlotAmount(Passport,Item,Slot)
+    local entry = vRP.Inventory(Passport)[tostring(Slot)]
+    return entry and entry.item == Item and entry.amount or 0
+end
+
+local function sulfuricOutputSlot(Passport,Item)
+    local inventory = vRP.Inventory(Passport)
+    for slot,entry in pairs(inventory) do
+        if entry.item == Item then return tostring(slot) end
+    end
+
+    for number = 5,vRP.InventorySlots(Passport) do
+        local slot = tostring(number)
+        if not inventory[slot] then return slot end
+    end
+end
+
+local function takeCleanPayment(Passport,amount)
+    local cash = vRP.ConsultItem(Passport,"dollar",amount)
+    if cash and vRP.TakeItem(Passport,cash.Item,amount,false,cash.Slot) then
+        return { Type = "cash", Item = cash.Item, Slot = tostring(cash.Slot), Amount = amount }
+    end
+
+    if vRP.PaymentBank(Passport,amount,false) then
+        return { Type = "bank", Amount = amount }
+    end
+end
+
+local function refundCleanPayment(Passport,payment)
+    if not payment then return false end
+    if payment.Type == "cash" then
+        local before = inventoryExactAmount(Passport,payment.Item)
+        vRP.GiveItem(Passport,payment.Item,payment.Amount,false,payment.Slot)
+        return inventoryExactAmount(Passport,payment.Item) - before == payment.Amount
+    elseif payment.Type == "bank" then
+        local before = vRP.GetBank(Passport)
+        vRP.GiveBank(Passport,payment.Amount,false)
+        return vRP.GetBank(Passport) - before == payment.Amount
+    end
+    return false
+end
+
+local function safeRefundCleanPayment(Passport,payment)
+    local ok,refunded = pcall(refundCleanPayment,Passport,payment)
+    if not ok then return false,refunded end
+    return refunded == true,nil
 end
 
 local function balances()
@@ -578,6 +717,234 @@ RegisterNetEvent("saoJudas:UseLaboratory",function()
     labLog(("passport=%s source=%s status=access_granted reason=interface_opened"):format(Passport,source))
 end)
 
+local SupplyAccessMessages = {
+    supplier_disabled = "O fornecedor esta temporariamente indisponivel.",
+    invalid_passport = "Seu personagem nao esta disponivel neste momento.",
+    not_member = "Este fornecedor atende somente membros de Sao Judas.",
+    role_missing = "Somente a lideranca ou Operadores de Laboratorio podem comprar este produto.",
+    routing_bucket_blocked = "O fornecedor nao esta disponivel nesta dimensao.",
+    player_not_found = "Seu personagem nao esta disponivel neste momento.",
+    player_dead = "Voce nao pode realizar esta compra neste estado.",
+    player_in_vehicle = "Saia do veiculo para falar com o fornecedor.",
+    safezone = "Esta compra nao pode ser realizada em uma safezone.",
+    player_handcuffed = "Voce nao pode realizar esta compra algemado.",
+    too_far = "Aproxime-se do fornecedor."
+}
+
+RegisterNetEvent("saoJudas:BuySulfuric",function()
+    local source = source
+    local supplier = SaoJudasOperations.SulfuricSupplier
+    local Passport,accessReason = validateSulfuricSupplierAccess(source,true)
+    if not Passport then
+        local CurrentPassport = vRP.Passport(source)
+        notify(source,SupplyAccessMessages[accessReason] or "Voce nao pode acessar este fornecedor.","vermelho")
+        suppliesLog(("passport=%s source=%s status=denied reason=%s"):format(
+            tostring(CurrentPassport),source,tostring(accessReason)
+        ))
+        return
+    end
+
+    local remaining = supplierCooldownRemaining()
+    if remaining > 0 then
+        notify(source,("O fornecedor estara disponivel novamente em <b>%s</b>."):format(friendlyDuration(remaining)),"amarelo")
+        suppliesLog(("passport=%s status=denied reason=cooldown remaining=%s"):format(Passport,remaining))
+        return
+    end
+
+    local lock,lockReason = acquireSulfuricLock(source,Passport)
+    if not lock then
+        notify(source,"O fornecedor esta atendendo outra solicitacao. Tente novamente em instantes.","amarelo")
+        suppliesLog(("passport=%s status=denied reason=%s"):format(Passport,tostring(lockReason)))
+        return
+    end
+
+    local function finish()
+        releaseSulfuricLock(lock)
+    end
+
+    local recoveryPayment = nil
+    local recoveryRefundAttempted = false
+    local deliveryAttempted = false
+    local transactionCompleted = false
+    local processOk,processError = xpcall(function()
+    local item = supplier and supplier.Item
+    local unitPrice = supplier and strictInteger(supplier.UnitPrice)
+    local minimum = supplier and strictInteger(supplier.MinimumAmount)
+    local maximum = supplier and strictInteger(supplier.MaximumAmount)
+    if type(item) ~= "string" or not exports.vrp:ItemExist(item) or not unitPrice or not minimum or not maximum or minimum > maximum then
+        finish()
+        notify(source,"O fornecedor esta temporariamente indisponivel.","vermelho")
+        suppliesLog(("passport=%s status=failed reason=invalid_server_config"):format(Passport))
+        return
+    end
+
+    local input = vKEYBOARD.Primary(source,("Quantidade de %s (%s a %s)"):format(supplier.Label,minimum,maximum))
+    if not sulfuricLockActive(lock) then
+        finish()
+        notify(source,"A solicitacao expirou. Tente novamente.","amarelo")
+        suppliesLog(("passport=%s status=denied reason=lock_expired"):format(Passport))
+        return
+    end
+
+    local quantity = input and strictInteger(input[1]) or nil
+    if not quantity or quantity < minimum or quantity > maximum then
+        finish()
+        notify(source,("Informe uma quantidade inteira entre %s e %s."):format(minimum,maximum),"vermelho")
+        suppliesLog(("passport=%s status=denied reason=invalid_quantity supplied=%s"):format(
+            Passport,tostring(input and input[1])
+        ))
+        return
+    end
+
+    remaining = supplierCooldownRemaining()
+    if remaining > 0 then
+        finish()
+        notify(source,("O fornecedor estara disponivel novamente em <b>%s</b>."):format(friendlyDuration(remaining)),"amarelo")
+        suppliesLog(("passport=%s status=denied reason=cooldown remaining=%s"):format(Passport,remaining))
+        return
+    end
+
+    local total = unitPrice * quantity
+    if not vRP.Request(source,"Fornecedor de Sao Judas",("Comprar <b>%sx %s</b> por <b>$%s</b>?"):format(
+        quantity,supplier.Label,Dotted(total)
+    )) then
+        finish()
+        suppliesLog(("passport=%s status=denied reason=player_cancelled"):format(Passport))
+        return
+    end
+
+    local CurrentPassport,currentReason = validateSulfuricSupplierAccess(source,true)
+    if CurrentPassport ~= Passport or not sulfuricLockActive(lock) then
+        finish()
+        notify(source,SupplyAccessMessages[currentReason] or "A autorizacao para esta compra mudou.","vermelho")
+        suppliesLog(("passport=%s status=denied reason=%s"):format(Passport,tostring(currentReason or "lock_expired")))
+        return
+    end
+
+    if vRP.MaxItens(Passport,item,quantity) or not vRP.CheckWeight(Passport,item,quantity) then
+        finish()
+        notify(source,"Voce nao possui limite ou peso disponivel para esta compra.","vermelho")
+        suppliesLog(("passport=%s item=%s quantity=%s status=denied reason=inventory_limit"):format(Passport,item,quantity))
+        return
+    end
+
+    local outputSlot = sulfuricOutputSlot(Passport,item)
+    if not outputSlot then
+        finish()
+        notify(source,"Voce nao possui um slot livre para receber o produto.","vermelho")
+        suppliesLog(("passport=%s item=%s quantity=%s status=denied reason=no_output_slot"):format(Passport,item,quantity))
+        return
+    end
+
+    local payment = takeCleanPayment(Passport,total)
+    if not payment then
+        finish()
+        notify(source,"Dinheiro limpo insuficiente.","vermelho")
+        suppliesLog(("passport=%s item=%s quantity=%s total=%s status=denied reason=insufficient_funds"):format(
+            Passport,item,quantity,total
+        ))
+        return
+    end
+    recoveryPayment = payment
+
+    local function refundAfterPayment(reason)
+        recoveryRefundAttempted = true
+        local refunded,refundError = safeRefundCleanPayment(Passport,payment)
+        recoveryPayment = nil
+        local status = refunded and "refunded" or "recovery_required"
+        finish()
+        notify(source,refunded and "A compra foi cancelada e o valor cobrado foi devolvido integralmente." or
+            "A compra entrou em recuperacao segura. Avise a administracao.","vermelho")
+        suppliesLog(("passport=%s item=%s quantity=%s total=%s payment=%s status=%s reason=%s refundError=%s"):format(
+            Passport,item,quantity,total,payment.Type,status,reason,tostring(refundError)
+        ))
+        return refunded
+    end
+
+    CurrentPassport,currentReason = validateSulfuricSupplierAccess(source,true)
+    if CurrentPassport ~= Passport or not sulfuricLockActive(lock) then
+        refundAfterPayment(currentReason or "lock_expired_after_payment")
+        return
+    end
+
+    if vRP.MaxItens(Passport,item,quantity) or not vRP.CheckWeight(Passport,item,quantity) then
+        refundAfterPayment("inventory_changed_after_payment")
+        return
+    end
+
+    outputSlot = sulfuricOutputSlot(Passport,item)
+    if not outputSlot then
+        refundAfterPayment("output_slot_changed_after_payment")
+        return
+    end
+
+    local beforeOutput = inventorySlotAmount(Passport,item,outputSlot)
+    deliveryAttempted = true
+    local deliveryOk,deliveryError = pcall(function()
+        vRP.GiveItem(Passport,item,quantity,false,outputSlot)
+    end)
+    local delivered = inventorySlotAmount(Passport,item,outputSlot) - beforeOutput
+    if not deliveryOk or delivered ~= quantity then
+        local outputRolledBack = delivered <= 0
+        if delivered > 0 then
+            outputRolledBack = vRP.TakeItem(Passport,item,delivered,false,outputSlot) and
+                inventorySlotAmount(Passport,item,outputSlot) == beforeOutput
+        end
+
+        recoveryRefundAttempted = outputRolledBack
+        local refunded,refundError = false,nil
+        if outputRolledBack then
+            refunded,refundError = safeRefundCleanPayment(Passport,payment)
+        end
+        recoveryPayment = nil
+        local status = refunded and "refunded" or "recovery_required"
+        local reason = refunded and "delivery_failed" or "delivery_rollback_failed"
+        finish()
+        TriggerClientEvent("inventory:Update",source)
+        notify(source,refunded and "A entrega falhou e o valor cobrado foi devolvido integralmente." or
+            "A compra entrou em recuperacao segura. Avise a administracao.","vermelho")
+        suppliesLog(("passport=%s item=%s quantity=%s total=%s payment=%s status=%s reason=%s deliveryError=%s refundError=%s delivered=%s outputRolledBack=%s"):format(
+            Passport,item,quantity,total,payment.Type,status,reason,tostring(deliveryError),tostring(refundError),delivered,tostring(outputRolledBack)
+        ))
+        return
+    end
+
+    recoveryPayment = nil
+    SulfuricCooldownUntil = os.time() + (tonumber(supplier.CooldownSeconds) or 1800)
+    transactionCompleted = true
+    finish()
+    TriggerClientEvent("inventory:Update",source)
+    notify(source,("Compra concluida: <b>%sx %s</b> por <b>$%s</b>."):format(quantity,supplier.Label,Dotted(total)),"verde")
+    suppliesLog(("passport=%s item=%s quantity=%s total=%s payment=%s status=completed cooldownUntil=%s"):format(
+        Passport,item,quantity,total,payment.Type,SulfuricCooldownUntil
+    ))
+    end,debug.traceback)
+
+    finish()
+    if not processOk then
+        local cleanError = tostring(processError):gsub("%s+"," ")
+        if transactionCompleted then
+            suppliesLog(("passport=%s status=completed reason=post_completion_error error=%s"):format(Passport,cleanError))
+        else
+            local hadPayment = recoveryPayment ~= nil
+            local refunded = false
+            local refundError = nil
+            if hadPayment and not deliveryAttempted and not recoveryRefundAttempted then
+                recoveryRefundAttempted = true
+                refunded,refundError = safeRefundCleanPayment(Passport,recoveryPayment)
+                recoveryPayment = nil
+            end
+
+            local status = hadPayment and (refunded and "refunded" or "recovery_required") or "failed"
+            notify(source,refunded and "A operacao falhou e o valor cobrado foi devolvido integralmente." or
+                "A operacao falhou de forma segura. Avise a administracao.","vermelho")
+            suppliesLog(("passport=%s status=%s reason=unexpected_error error=%s refundError=%s"):format(
+                Passport,status,cleanError,tostring(refundError)
+            ))
+        end
+    end
+end)
+
 RegisterCommand("saojudas_vault_debug",function(source)
     if not SaoJudasOperations.Debug then return end
 
@@ -637,6 +1004,7 @@ RegisterCommand("saojudas_lab_debug",function(source)
 end,false)
 
 AddEventHandler("playerDropped",function()
+    local droppedSource = source
     local Passport = vRP.Passport(source)
     if Passport then
         DistributionRoleCache[Passport] = nil
@@ -647,6 +1015,13 @@ AddEventHandler("playerDropped",function()
     for key in pairs(RateLimits) do
         if key:sub(1,#prefix) == prefix then
             RateLimits[key] = nil
+        end
+    end
+
+    for lockedPassport,lock in pairs(SulfuricPassportLocks) do
+        if lock.Source == droppedSource then
+            SulfuricPassportLocks[lockedPassport] = nil
+            if SulfuricOrganizationLock == lock then SulfuricOrganizationLock = nil end
         end
     end
 end)

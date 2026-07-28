@@ -185,5 +185,18 @@ SaoJudasOperations = {
         }
     },
 
+    SulfuricSupplier = {
+        Enabled = true,
+        Coords = vector3(179.90,2779.98,45.70),
+        ServerDistance = 3.0,
+        Item = "sulfuric",
+        Label = "Ácido Sulfúrico",
+        UnitPrice = 100,
+        MinimumAmount = 1,
+        MaximumAmount = 5,
+        CooldownSeconds = 30 * 60,
+        LockTimeoutSeconds = 90
+    },
+
     Debug = false
 }

@@ -60,6 +60,22 @@ local function shopName(mode)
 	return "Loja"
 end
 
+local function resolveShopReference(Reference)
+	if Location[Reference] then return Reference end
+
+	local NumericReference = tonumber(Reference)
+	if NumericReference and Location[NumericReference] then return NumericReference end
+
+	local RequestedId = type(Reference) == "string" and Reference or nil
+	if RequestedId then
+		for Number,Shop in ipairs(Location) do
+			if Shop.Id == RequestedId then return Number end
+		end
+	end
+
+	return Reference
+end
+
 local function HelpText(Text)
 	BeginTextCommandDisplayHelp("STRING")
 	AddTextComponentSubstringPlayerName(Text)
@@ -230,6 +246,7 @@ end)
 -- SHOPS:OPEN
 -----------------------------------------------------------------------------------------------------------------------------------------
 AddEventHandler("shops:Open",function(Number)
+	Number = resolveShopReference(Number)
 	local RequestedShop = Location[Number] and Location[Number].Mode or Number
 	if RequestedShop == "Pombal" or RequestedShop == "SaoJudas" then
 		print(("[shops] faction_arsenal_open_requested shop=%s location=%s"):format(tostring(RequestedShop),tostring(Number)))
@@ -263,7 +280,7 @@ AddEventHandler("shops:Open",function(Number)
 	end
 
 	local RouteMatch = not Shop.Route or Shop.Route == LocalPlayer.state.Route
-	if not RouteMatch or not vSERVER.Permission(Shop.Mode) then
+	if not RouteMatch or not vSERVER.Permission(Shop.Mode,Number) then
 		return
 	end
 
@@ -295,29 +312,38 @@ CreateThread(function()
 
 	Wait(1000)
 
+	local RegisteredTargetZones = 0
 	for Number,v in pairs(Location) do
-		local Label = v.Name or shopName(v.Mode)
-		local Radius = math.max(tonumber(v.Circle) or 0.0,1.35)
-
-		-- CircleZone com useZ = false deixa a mira do target bem mais tolerante em balcões e prateleiras.
-		exports.target:AddCircleZone("Shops:"..Number,v.Coords,Radius,{
-			name = "Shops:"..Number,
-			heading = 0.0,
-			useZ = false
-		},{
-			shop = Number,
-			Distance = 2.35,
-			options = {
+		if v.RegisterTarget ~= false then
+			local Label = v.Name or shopName(v.Mode)
+			local Radius = math.max(tonumber(v.Circle) or 0.0,1.35)
+			local Options = {
 				{
 					event = "shops:Open",
 					label = Label,
 					tunnel = "client"
 				}
 			}
-		})
+
+			for _,Option in ipairs(v.AdditionalTargetOptions or {}) do
+				Options[#Options + 1] = Option
+			end
+
+			-- CircleZone com useZ = false deixa a mira do target bem mais tolerante em balcões e prateleiras.
+			exports.target:AddCircleZone("Shops:"..Number,v.Coords,Radius,{
+				name = "Shops:"..Number,
+				heading = 0.0,
+				useZ = false
+			},{
+				shop = Number,
+				Distance = 2.35,
+				options = Options
+			})
+			RegisteredTargetZones = RegisteredTargetZones + 1
+		end
 	end
 
-	print(("[shops] %s zonas de lojas registradas no target e %s blips criados no mapa."):format(#Location,#ShopBlips))
+	print(("[shops] %s zonas de lojas registradas no target e %s blips criados no mapa."):format(RegisteredTargetZones,#ShopBlips))
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- THREADINTERACTION

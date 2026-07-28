@@ -111,7 +111,14 @@ Location = {
 		Mode = "Eletronics"
 	},{
 		Coords = vec3(179.9,2779.98,45.7),
-		Mode = "Clandestine"
+		Mode = "Clandestine",
+		AdditionalTargetOptions = {
+			{
+				event = "saoJudas:BuySulfuric",
+				label = "Comprar Ácido Sulfúrico",
+				tunnel = "server"
+			}
+		}
 	},{
 		Coords = vec3(46.7,-1749.71,29.62),
 		Mode = "Megamall"
@@ -159,6 +166,12 @@ Location = {
 		DirectInteraction = true,
 		InteractionDistance = 3.0,
 		DrawInteractionMarker = false
+	},{
+		Id = "hospital_farmacia",
+		Coords = vec3(-664.49,321.26,83.09),
+		Mode = "Farmacia",
+		Name = "Farmacia do Hospital",
+		RegisterTarget = false
 	}
 }
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -408,7 +421,9 @@ List = {
 	Farmacia = {
 		Mode = "Buy",
 		Type = "Cash",
+		RequiresLocation = true,
 		List = {
+			saline = 50,
 			bandage = 90,
 			dipiroca = 45,
 			navaljina = 75,

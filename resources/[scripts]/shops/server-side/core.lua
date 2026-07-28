@@ -12,6 +12,7 @@ local QuoteMaximumAmount = 100
 local ShopInteractionDistance = 4.0
 local MultiplayerDebug = false
 local MultiplayerDiagnosticsActive = false
+local validateLocation
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- CONNECTION
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -59,7 +60,7 @@ end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PERMISSION
 -----------------------------------------------------------------------------------------------------------------------------------------
-function Lil.Permission(Name)
+function Lil.Permission(Name,LocationIndex)
 	local source = source
 	local Data = List[Name]
 	local Passport = vRP.Passport(source)
@@ -68,6 +69,11 @@ function Lil.Permission(Name)
 	end
 
 	local Allowed = hasShopPermission(source,Passport,Name)
+	if Allowed and LocationIndex ~= nil then
+		Allowed = validateLocation(source,Name,LocationIndex) == true
+	elseif Allowed and Data.RequiresLocation then
+		Allowed = false
+	end
 	if Name == "Pombal" or Name == "SaoJudas" then
 		local IsLeader = vRP.HasGroup(Passport,Name,1) and true or false
 		print(("[shops] faction_arsenal_permission faction=%s passport=%s leader=%s allowed=%s"):format(tostring(Name),tostring(Passport),tostring(IsLeader),tostring(Allowed)))
@@ -229,7 +235,7 @@ local function normalizePurchase(Item,Amount)
 	return Item,numericAmount
 end
 
-local function validateLocation(source,Name,LocationIndex,Origin)
+validateLocation = function(source,Name,LocationIndex,Origin)
 	local Ped = GetPlayerPed(source)
 	if Ped == 0 then
 		return false,"Personagem indisponivel."
@@ -253,6 +259,11 @@ local function validateLocation(source,Name,LocationIndex,Origin)
 		end
 
 		return true,Coords
+	end
+
+	local Data = List[Name]
+	if Data and Data.RequiresLocation then
+		return false,"Utilize o ponto oficial desta loja."
 	end
 
 	-- Lojas abertas por objetos e integracoes antigas nao possuem um indice em

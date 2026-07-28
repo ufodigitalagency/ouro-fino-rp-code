@@ -236,7 +236,7 @@ local function TryInteract(data)
     end
 
     if id == "hospital_farmacia" then
-        TriggerEvent("shops:Open","Farmacia")
+        TriggerEvent("shops:Open","hospital_farmacia")
         return true
     end
 
