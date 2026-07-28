@@ -20,7 +20,7 @@ local TakeBlock = false
 -----------------------------------------------------------------------------------------------------------------------------------------
 local Chests = {
 	{ Name = "Policia", Coords = vec3(-421.63,1088.31,327.68), Mode = "1" },
-	{ Name = "Paramedico", Coords = vec3(353.0,-1427.67,32.67), Mode = "2" },
+	{ Name = "Paramedico", Coords = vec3(-675.2672,316.5318,93.2960), Mode = "2" },
 	{ Name = "Ballas", Coords = vec3(-626.63,180.34,66.69), Mode = "4" },
 	{ Name = "Lester", Coords = vec3(1275.21,-1712.12,54.64), Mode = "2" },
 	{ Name = "Pombal", Coords = vec3(2539.69,2524.95,46.24), Mode = "4", Marker = true, Radius = 0.5, Distance = 1.75 },

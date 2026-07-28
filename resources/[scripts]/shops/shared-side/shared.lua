@@ -80,7 +80,7 @@ Location = {
 		Coords = vec3(-679.14,5834.37,17.32),
 		Mode = "Hunting2"
 	},{
-		Coords = vec3(348.7,-1420.72,32.67),
+		Coords = vec3(-675.0817,338.8634,83.8187),
 		Mode = "Paramedico"
 	},{
 		Coords = vec3(-422.59,1089.13,327.68),
