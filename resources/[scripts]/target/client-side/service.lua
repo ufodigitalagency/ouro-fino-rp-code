@@ -3,13 +3,13 @@
 -----------------------------------------------------------------------------------------------------------------------------------------
 local Services = {
 	{
-		Permission = "Policia",
-		Coords = vec3(-448.11,1103.87,327.68),
+		Permission = "Paramedico",
+		Coords = vec3(-678.4653,326.4574,83.2539),
 		Distance = 1.5,
 		Weight = 0.35
 	},{
-		Permission = "Paramedico",
-		Coords = vec3(-678.4653,326.4574,83.2539),
+		Permission = "Policia",
+		Coords = vec3(-433.3145,1099.7092,327.9403),
 		Distance = 1.5,
 		Weight = 0.35
 	}

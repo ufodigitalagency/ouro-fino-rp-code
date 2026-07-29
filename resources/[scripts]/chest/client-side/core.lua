@@ -24,7 +24,8 @@ local Chests = {
 	{ Name = "Ballas", Coords = vec3(-626.63,180.34,66.69), Mode = "4" },
 	{ Name = "Lester", Coords = vec3(1275.21,-1712.12,54.64), Mode = "2" },
 	{ Name = "Pombal", Coords = vec3(2539.69,2524.95,46.24), Mode = "4", Marker = true, Radius = 0.5, Distance = 1.75 },
-	{ Name = "SaoJudas", Coords = vec3(-482.34,1614.76,366.64), Mode = "4", Marker = true, Radius = 0.5, Distance = 1.75 }
+	{ Name = "SaoJudas", Coords = vec3(-482.34,1614.76,366.64), Mode = "4", Marker = true, Radius = 0.5, Distance = 1.75 },
+	{ Name = "Policia", Coords = vec3(-412.3901,1102.7982,328.1586), Mode = "5", Radius = 0.35, Distance = 1.5 }
 }
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- LABELS
@@ -74,6 +75,14 @@ local Labels = {
 			label = "Metas",
 			tunnel = "client",
 			service = "Goals"
+		}
+	},
+	["5"] = {
+		{
+			event = "chest:Open",
+			label = "Baú da Polícia",
+			tunnel = "client",
+			service = "Normal"
 		}
 	}
 }
