@@ -620,17 +620,23 @@ end
 -- DISMISS
 -----------------------------------------------------------------------------------------------------------------------------------------
 function Lil.Dismiss(Target)
-    local source = source
-    local Passport = vRP.Passport(source)
+    local source = tonumber(source)
+    local Passport = source and source > 0 and vRP.Passport(source)
     local Group = Passport and Division[Passport]
+    local Hierarchy = type(Group) == "string" and Group ~= "" and vRP.Hierarchy(Group) or nil
+    local ValidGroup = type(Hierarchy) == "table" and #Hierarchy > 0
+    local Level = ValidGroup and tonumber(vRP.HasPermission(Passport,Group)) or nil
 
-    if not Passport or not Group or not Target then
+    local function Denied()
+        if source and source > 0 then
+            TriggerClientEvent("ems:Notify",source,"Atencao","Você não possui permissão.","amarelo")
+        end
+
         return false
     end
 
-    local Level = vRP.HasPermission(Passport,Group)
-    if not Level then
-        return false
+    if not Passport or not ValidGroup or not Level or not Hierarchy[Level] then
+        return Denied()
     end
 
     local Allowed = (Level == 1)
@@ -644,32 +650,44 @@ function Lil.Dismiss(Target)
     end
 
     if not Allowed then
-        TriggerClientEvent("ems:Notify",source,"Atencao","Você não possui permissão.","amarelo")
-        return false
+        return Denied()
     end
 
-    if vRP.HasGroup(Target,Group) then
-        vRP.RemovePermission(Target,Group)
-        return true
+    Target = tonumber(Target)
+    if not Target or Target <= 0 or math.floor(Target) ~= Target or Target == Passport or not vRP.Identity(Target) then
+        return Denied()
     end
 
-    return false
+    local TargetLevel = tonumber(vRP.HasPermission(Target,Group))
+    if not TargetLevel or not Hierarchy[TargetLevel] or Level >= TargetLevel then
+        return Denied()
+    end
+
+    vRP.RemovePermission(Target,Group)
+
+    return true
 end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- HIERARCHY
 -----------------------------------------------------------------------------------------------------------------------------------------
 function Lil.Hierarchy(Data)
-    local source = source
-    local Passport = vRP.Passport(source)
+    local source = tonumber(source)
+    local Passport = source and source > 0 and vRP.Passport(source)
     local Group = Passport and Division[Passport]
+    local Hierarchy = type(Group) == "string" and Group ~= "" and vRP.Hierarchy(Group) or nil
+    local ValidGroup = type(Hierarchy) == "table" and #Hierarchy > 0
+    local Level = ValidGroup and tonumber(vRP.HasPermission(Passport,Group)) or nil
 
-    if not Passport or not Group or not Data or not Data.Passport or not Data.Mode then
+    local function Denied()
+        if source and source > 0 then
+            TriggerClientEvent("ems:Notify",source,"Atencao","Você não possui permissão.","amarelo")
+        end
+
         return false
     end
 
-    local Level = vRP.HasPermission(Passport, Group)
-    if not Level then
-        return false
+    if not Passport or not ValidGroup or not Level or not Hierarchy[Level] then
+        return Denied()
     end
 
     local Allowed = (Level == 1)
@@ -683,14 +701,33 @@ function Lil.Hierarchy(Data)
     end
 
     if not Allowed then
-        TriggerClientEvent("ems:Notify",source,"Atencao","Você não possui permissão.","amarelo")
-        return false
+        return Denied()
     end
 
-    local Text = Data.Mode == "Promote" and "promovido" or "rebaixado"
-    vRP.SetPermission(Data.Passport,Group,Passport,Data.Mode)
+    if type(Data) ~= "table" then
+        return Denied()
+    end
 
-    local TargetSource = vRP.Source(Data.Passport)
+    local Target = tonumber(Data.Passport)
+    local Mode = Data.Mode
+    if not Target or Target <= 0 or math.floor(Target) ~= Target or Target == Passport or not vRP.Identity(Target) or (Mode ~= "Promote" and Mode ~= "Demote") then
+        return Denied()
+    end
+
+    local TargetLevel = tonumber(vRP.HasPermission(Target,Group))
+    if not TargetLevel or not Hierarchy[TargetLevel] then
+        return Denied()
+    end
+
+    local RequestedTargetLevel = TargetLevel + (Mode == "Demote" and 1 or -1)
+    if not Hierarchy[RequestedTargetLevel] or Level >= TargetLevel or Level >= RequestedTargetLevel then
+        return Denied()
+    end
+
+    local Text = Mode == "Promote" and "promovido" or "rebaixado"
+    vRP.SetPermission(Target,Group,RequestedTargetLevel)
+
+    local TargetSource = vRP.Source(Target)
     if TargetSource then
         TriggerClientEvent("Notify",TargetSource,Group,"Você foi <b>" .. Text .. "</b> do seu cargo atual.","verde",5000)
     end
