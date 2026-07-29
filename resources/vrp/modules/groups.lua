@@ -283,6 +283,7 @@ function vRP.ServiceLeave(source,Passport,Permission,Silenced)
 
 	local CurrentTimer = os.time()
 	local Passport = tostring(Passport)
+	local WasInService = (Service[Permission] and Service[Permission][Passport]) or (Playing[Permission] and Playing[Permission][Passport])
 
 	if not Playing[Permission] then
 		Playing[Permission] = {}
@@ -306,6 +307,10 @@ function vRP.ServiceLeave(source,Passport,Permission,Silenced)
 	if Service[Permission] and Service[Permission][Passport] then
 		TriggerClientEvent("service:Client",source,Permission,false)
 		Service[Permission][Passport] = nil
+	end
+
+	if WasInService then
+		TriggerEvent("player:ServiceLeave",source,Passport,Permission)
 	end
 
 	if not Silenced then

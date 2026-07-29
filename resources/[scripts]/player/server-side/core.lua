@@ -248,19 +248,168 @@ local Preset = {
         }
 	}
 }
+local PoliceServices = { "LSPD","BCSO","SAPR" }
+local PoliceServiceLookup = { LSPD = true, BCSO = true, SAPR = true }
+local UniformSnapshots = {}
+local UniformCaptureBusy = {}
+local UniformPassportBySource = {}
+
+local function copyTable(Value,Seen)
+	if type(Value) ~= "table" then
+		return Value
+	end
+
+	Seen = Seen or {}
+	if Seen[Value] then
+		return Seen[Value]
+	end
+
+	local Copy = {}
+	Seen[Value] = Copy
+	for Key,Data in pairs(Value) do
+		Copy[copyTable(Key,Seen)] = copyTable(Data,Seen)
+	end
+
+	return Copy
+end
+
+local function copyCustomization(Customization)
+	if type(Customization) ~= "table" then
+		return nil
+	end
+
+	local Slots = 0
+	for Slot,Data in pairs(Customization) do
+		if type(Slot) ~= "string" or type(Data) ~= "table" or tonumber(Data.item) == nil or tonumber(Data.texture) == nil then
+			return nil
+		end
+		Slots = Slots + 1
+	end
+
+	return Slots >= 15 and copyTable(Customization) or nil
+end
+
+local function hasPoliceService(Passport)
+	for _,Permission in ipairs(PoliceServices) do
+		if vRP.HasService(Passport,Permission) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function uniformClass(Passport,Number)
+	if Number == "1" and hasPoliceService(Passport) then
+		return "Police"
+	elseif Number == "2" and vRP.HasService(Passport,"Paramedico") then
+		return "Paramedico"
+	end
+
+	return nil
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PLAYER:PRESET
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterServerEvent("player:Preset")
 AddEventHandler("player:Preset",function(Number)
-	local source = source
-	local Passport = vRP.Passport(source)
-	if Passport and vRP.HasService(Passport,"Emergencia") and Preset[Number] then
-		local Model = vRP.ModelPlayer(source)
+	local source = tonumber(source)
+	if not source or source <= 0 or (Number ~= "1" and Number ~= "2") or not Preset[Number] then
+		return
+	end
 
-		if Preset[Number][Model] then
-			TriggerClientEvent("skinshop:Apply",source,Preset[Number][Model],true)
+	local Passport = vRP.Passport(source)
+	local Class = Passport and uniformClass(Passport,Number) or nil
+	local Model = Class and vRP.ModelPlayer(source) or nil
+	if not Passport or not Class or not Model or not Preset[Number][Model] then
+		return
+	end
+
+	Passport = tostring(Passport)
+	local Snapshot = UniformSnapshots[Passport]
+	if not Snapshot then
+		if UniformCaptureBusy[Passport] then
+			return
 		end
+
+		UniformCaptureBusy[Passport] = true
+		local Success,Customization = pcall(function()
+			return vSKINSHOP.Customization(source)
+		end)
+		UniformCaptureBusy[Passport] = nil
+
+		local CurrentPassport = vRP.Passport(source)
+		if not CurrentPassport or tostring(CurrentPassport) ~= Passport or uniformClass(Passport,Number) ~= Class or vRP.ModelPlayer(source) ~= Model then
+			return
+		end
+
+		local Clothes = Success and copyCustomization(Customization) or nil
+		if not Clothes then
+			TriggerClientEvent("Notify",source,"Fardamento","Não foi possível preservar sua roupa civil. Tente novamente.","vermelho",5000)
+			return
+		end
+
+		Snapshot = { Class = Class, Clothes = Clothes }
+		UniformSnapshots[Passport] = Snapshot
+	else
+		Snapshot.Class = Class
+	end
+
+	UniformPassportBySource[source] = Passport
+	TriggerClientEvent("skinshop:Apply",source,Preset[Number][Model],false)
+end)
+
+AddEventHandler("player:ServiceLeave",function(_,Passport,Permission)
+	Passport = tostring(Passport or "")
+	local Snapshot = UniformSnapshots[Passport]
+	if not Snapshot then
+		return
+	end
+
+	if Snapshot.Class == "Police" then
+		if not PoliceServiceLookup[Permission] or hasPoliceService(Passport) then
+			return
+		end
+	elseif Snapshot.Class == "Paramedico" then
+		if Permission ~= "Paramedico" or vRP.HasService(Passport,"Paramedico") then
+			return
+		end
+	else
+		return
+	end
+
+	local CurrentSource = tonumber(vRP.Source(Passport))
+	local CurrentPassport = CurrentSource and vRP.Passport(CurrentSource) or nil
+	if not CurrentSource or CurrentSource <= 0 or not CurrentPassport or tostring(CurrentPassport) ~= Passport then
+		return
+	end
+
+	TriggerClientEvent("skinshop:Apply",CurrentSource,copyTable(Snapshot.Clothes),false)
+	UniformSnapshots[Passport] = nil
+	UniformCaptureBusy[Passport] = nil
+	if UniformPassportBySource[CurrentSource] == Passport then
+		UniformPassportBySource[CurrentSource] = nil
+	end
+end)
+
+AddEventHandler("playerDropped",function()
+	local PlayerSource = tonumber(source)
+	local Passport = PlayerSource and vRP.Passport(PlayerSource) or nil
+	Passport = Passport and tostring(Passport) or (PlayerSource and UniformPassportBySource[PlayerSource] or nil)
+	if Passport then
+		UniformSnapshots[Passport] = nil
+		UniformCaptureBusy[Passport] = nil
+	end
+	if PlayerSource then
+		UniformPassportBySource[PlayerSource] = nil
+	end
+end)
+
+AddEventHandler("onResourceStop",function(Resource)
+	if Resource == GetCurrentResourceName() then
+		UniformSnapshots = {}
+		UniformCaptureBusy = {}
+		UniformPassportBySource = {}
 	end
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
