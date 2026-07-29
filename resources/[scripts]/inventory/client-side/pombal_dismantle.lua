@@ -7,9 +7,14 @@ local StartRegistered = false
 local HasAccess = false
 local CurrentSession = nil
 local CurrentVehicle = 0
+local CurrentVehicleNet = 0
+local VehicleAnchor = nil
 local CurrentStage = nil
 local StageBusy = false
 local StageRequestPending = false
+local StageApplying = false
+local PendingStageIndex = nil
+local LastAppliedStageIndex = 0
 local DebugEnabled = false
 local DebugStatus = {}
 local PreviousVehicleState = nil
@@ -101,12 +106,51 @@ local function stageCoords(vehicle,stage)
     return GetOffsetFromEntityInWorldCoords(vehicle,stage.FallbackOffset.x,stage.FallbackOffset.y,stage.FallbackOffset.z)
 end
 
+local function sessionVehicle(network)
+    local expected = tonumber(CurrentVehicleNet) or 0
+    if expected <= 0 or (network and tonumber(network) ~= expected) then return 0 end
+    if CurrentSession and tonumber(CurrentSession.VehicleNet) ~= expected then return 0 end
+    if VehicleAnchor and tonumber(VehicleAnchor.Network) ~= expected then return 0 end
+
+    local vehicle = NetworkGetEntityFromNetworkId(expected)
+    if vehicle == 0 or not DoesEntityExist(vehicle) or NetworkGetNetworkIdFromEntity(vehicle) ~= expected then return 0 end
+    if CurrentVehicle ~= 0 and DoesEntityExist(CurrentVehicle) and CurrentVehicle ~= vehicle then return 0 end
+
+    CurrentVehicle = vehicle
+    return vehicle
+end
+
+local function applyVehicleAnchor(vehicle)
+    if not VehicleAnchor or VehicleAnchor.Active == false or not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+
+    SetEntityCoordsNoOffset(vehicle,VehicleAnchor.Coords.x,VehicleAnchor.Coords.y,VehicleAnchor.Coords.z,false,false,false)
+    SetEntityRotation(vehicle,VehicleAnchor.Rotation.x,VehicleAnchor.Rotation.y,VehicleAnchor.Rotation.z,2,true)
+    SetEntityHeading(vehicle,VehicleAnchor.Heading)
+    SetEntityVelocity(vehicle,0.0,0.0,0.0)
+    if SetEntityAngularVelocity then SetEntityAngularVelocity(vehicle,0.0,0.0,0.0) end
+    SetEntityCollision(vehicle,true,true)
+    SetVehicleHandbrake(vehicle,true)
+    SetVehicleUndriveable(vehicle,true)
+    SetVehicleEngineOn(vehicle,false,true,true)
+    SetVehicleDoorsLockedForAllPlayers(vehicle,true)
+    SetVehicleDoorsLocked(vehicle,2)
+    FreezeEntityPosition(vehicle,true)
+    return IsEntityPositionFrozen(vehicle)
+end
+
+local function anchorSessionVehicle(timeoutMs)
+    local vehicle = sessionVehicle()
+    if vehicle == 0 or not requestControl(vehicle,timeoutMs or 1000) then return false end
+    if sessionVehicle() ~= vehicle then return false end
+    return applyVehicleAnchor(vehicle)
+end
+
 local function createStageTarget(stageIndex)
     removeStageTarget()
-    if not CurrentSession or not DoesEntityExist(CurrentVehicle) then return end
+    if not CurrentSession or not anchorSessionVehicle(1000) then return false end
 
     local stage = PombalChopshop.Stages[stageIndex]
-    if not stage then return end
+    if not stage then return false end
     CurrentStage = stage
     StageRequestPending = false
 
@@ -124,13 +168,23 @@ local function createStageTarget(stageIndex)
             }
         }
     })
+    return true
 end
 
 local function restoreVehicle(network)
-    local vehicle = NetworkGetEntityFromNetworkId(tonumber(network) or 0)
-    if vehicle == 0 or not DoesEntityExist(vehicle) then return end
-    if not requestControl(vehicle,1000) then return end
+    local vehicleNet = tonumber(network) or 0
+    if vehicleNet <= 0 then return false end
+    if CurrentVehicleNet > 0 and vehicleNet ~= CurrentVehicleNet then return false end
 
+    local vehicle = NetworkGetEntityFromNetworkId(vehicleNet)
+    if vehicle == 0 or not DoesEntityExist(vehicle) or NetworkGetNetworkIdFromEntity(vehicle) ~= vehicleNet then return false end
+    if CurrentVehicleNet <= 0 and Entity(vehicle).state["of:chopshopActive"] ~= false then return false end
+    if not requestControl(vehicle,1000) then return false end
+    if NetworkGetNetworkIdFromEntity(vehicle) ~= vehicleNet then return false end
+
+    if CurrentVehicleNet > 0 and VehicleAnchor then VehicleAnchor.Active = false end
+    SetEntityVelocity(vehicle,0.0,0.0,0.0)
+    if SetEntityAngularVelocity then SetEntityAngularVelocity(vehicle,0.0,0.0,0.0) end
     SetVehicleHandbrake(vehicle,false)
     SetVehicleUndriveable(vehicle,false)
     FreezeEntityPosition(vehicle,false)
@@ -139,6 +193,7 @@ local function restoreVehicle(network)
     if PreviousVehicleState and PreviousVehicleState.EngineRunning then
         SetVehicleEngineOn(vehicle,true,true,false)
     end
+    return true
 end
 
 local function clearSession(completed)
@@ -147,35 +202,47 @@ local function clearSession(completed)
     if CurrentSession and not completed then restoreVehicle(CurrentSession.VehicleNet) end
     CurrentSession = nil
     CurrentVehicle = 0
+    CurrentVehicleNet = 0
+    VehicleAnchor = nil
     CurrentStage = nil
     StageBusy = false
     StageRequestPending = false
+    StageApplying = false
+    PendingStageIndex = nil
+    LastAppliedStageIndex = 0
     PreviousVehicleState = nil
 end
 
-local function lockVehicle(vehicle,bay)
+local function lockVehicle(vehicle,bay,network)
     if not requestControl(vehicle,2500) then return false end
+    if NetworkGetNetworkIdFromEntity(vehicle) ~= network then return false end
 
     PreviousVehicleState = {
         LockStatus = GetVehicleDoorLockStatus(vehicle),
         EngineRunning = GetIsVehicleEngineRunning(vehicle)
     }
 
-    local current = GetEntityCoords(vehicle)
-    local horizontal = #(vector2(current.x,current.y) - vector2(bay.VehicleCoords.x,bay.VehicleCoords.y))
-    if PombalChopshop.Alignment.Enabled and horizontal <= PombalChopshop.Alignment.MaximumSnapDistance then
+    if PombalChopshop.Alignment.Enabled then
         SetEntityCoordsNoOffset(vehicle,bay.VehicleCoords.x,bay.VehicleCoords.y,bay.VehicleCoords.z,false,false,false)
         SetVehicleOnGroundProperly(vehicle)
     end
 
     SetEntityHeading(vehicle,bay.VehicleCoords.w)
-    SetEntityVelocity(vehicle,0.0,0.0,0.0)
-    SetVehicleHandbrake(vehicle,true)
-    SetVehicleUndriveable(vehicle,true)
-    SetVehicleEngineOn(vehicle,false,true,true)
-    SetVehicleDoorsLockedForAllPlayers(vehicle,true)
-    SetVehicleDoorsLocked(vehicle,2)
-    return true
+    VehicleAnchor = {
+        Active = true,
+        Network = network,
+        Coords = GetEntityCoords(vehicle),
+        Rotation = GetEntityRotation(vehicle,2),
+        Heading = bay.VehicleCoords.w
+    }
+    return applyVehicleAnchor(vehicle)
+end
+
+local function activateStage(stageIndex)
+    stageIndex = tonumber(stageIndex)
+    if not CurrentSession or not stageIndex or stageIndex ~= math.floor(stageIndex) or not PombalChopshop.Stages[stageIndex] then return false end
+    CurrentSession.Stage = stageIndex
+    return createStageTarget(stageIndex)
 end
 
 local function registerStartTarget()
@@ -246,33 +313,58 @@ RegisterNetEvent("pombalDismantle:CancelCurrent",function()
 end)
 
 RegisterNetEvent("pombalDismantle:SessionStarted",function(data)
+    if type(data) ~= "table" then return end
+
+    local vehicleNet = tonumber(data.VehicleNet) or 0
+    if vehicleNet <= 0 then
+        TriggerServerEvent("pombalDismantle:Cancel")
+        notify("Nao foi possivel identificar o veiculo da vaga.","vermelho")
+        return
+    end
+
     local vehicle = 0
     local timeout = GetGameTimer() + 5000
     while vehicle == 0 and GetGameTimer() < timeout do
-        vehicle = NetworkGetEntityFromNetworkId(data.VehicleNet)
+        vehicle = NetworkGetEntityFromNetworkId(vehicleNet)
         Wait(50)
     end
-    if vehicle == 0 or not DoesEntityExist(vehicle) then
+    if vehicle == 0 or not DoesEntityExist(vehicle) or NetworkGetNetworkIdFromEntity(vehicle) ~= vehicleNet then
         TriggerServerEvent("pombalDismantle:Cancel")
         notify("Nao foi possivel acessar o veiculo da vaga.","vermelho")
         return
     end
 
     local bay = bayConfig(data.BayId)
-    if not bay or not lockVehicle(vehicle,bay) then
+    CurrentSession = data
+    CurrentVehicle = vehicle
+    CurrentVehicleNet = vehicleNet
+    StageApplying = false
+    PendingStageIndex = nil
+    LastAppliedStageIndex = 0
+
+    if not bay or not lockVehicle(vehicle,bay,vehicleNet) then
+        clearSession(false)
         TriggerServerEvent("pombalDismantle:Cancel")
         notify("Nao foi possivel travar o veiculo para o desmanche.","vermelho")
         return
     end
 
-    CurrentSession = data
-    CurrentVehicle = vehicle
-    createStageTarget(data.Stage or 1)
+    if not activateStage(data.Stage or 1) then
+        clearSession(false)
+        TriggerServerEvent("pombalDismantle:Cancel")
+        notify("Nao foi possivel marcar a primeira peca do desmanche.","vermelho")
+        return
+    end
     notify("A primeira peca esta marcada em vermelho. Aproxime-se e pressione E.","verde")
 end)
 
 RegisterNetEvent("pombalDismantle:BeginCurrentStage",function()
     if not CurrentSession or not CurrentStage or StageBusy or StageRequestPending then return end
+    if not anchorSessionVehicle(1000) then
+        TriggerServerEvent("pombalDismantle:Cancel")
+        notify("O veiculo do desmanche nao esta mais disponivel.","vermelho")
+        return
+    end
     StageRequestPending = true
     TriggerServerEvent("pombalDismantle:BeginStage",CurrentStage.Id)
     SetTimeout(2000,function()
@@ -283,6 +375,11 @@ end)
 RegisterNetEvent("pombalDismantle:PerformStage",function(stageId,duration)
     if not CurrentSession or not CurrentStage or CurrentStage.Id ~= stageId or StageBusy then return end
     StageRequestPending = false
+    if not anchorSessionVehicle(1500) then
+        TriggerServerEvent("pombalDismantle:AbortStage",stageId)
+        notify("Nao foi possivel manter o veiculo na vaga.","vermelho")
+        return
+    end
     StageBusy = true
     removeStageTarget()
 
@@ -307,6 +404,11 @@ RegisterNetEvent("pombalDismantle:PerformStage",function(stageId,duration)
     StopAnimTask(ped,animation.Dictionary,animation.Name,1.0)
     RemoveAnimDict(animation.Dictionary)
     StageBusy = false
+    if not anchorSessionVehicle(1500) then
+        TriggerServerEvent("pombalDismantle:AbortStage",stageId)
+        notify("Nao foi possivel manter o veiculo na vaga.","vermelho")
+        return
+    end
     TriggerServerEvent("pombalDismantle:CompleteStage",stageId)
 end)
 
@@ -333,18 +435,47 @@ CreateThread(function()
     end
 end)
 
+CreateThread(function()
+    while true do
+        if CurrentSession and VehicleAnchor and VehicleAnchor.Active then
+            anchorSessionVehicle(250)
+            Wait(500)
+        else
+            Wait(1000)
+        end
+    end
+end)
+
 RegisterNetEvent("pombalDismantle:NextStage",function(stageIndex)
-    if CurrentSession then
-        CurrentSession.Stage = stageIndex
-        createStageTarget(stageIndex)
+    stageIndex = tonumber(stageIndex)
+    if not CurrentSession or not stageIndex or stageIndex ~= math.floor(stageIndex) then return end
+    if StageApplying or stageIndex > LastAppliedStageIndex + 1 then
+        PendingStageIndex = stageIndex
+        return
+    end
+    if not activateStage(stageIndex) then
+        TriggerServerEvent("pombalDismantle:Cancel")
+        notify("Nao foi possivel marcar a proxima peca do desmanche.","vermelho")
     end
 end)
 
 RegisterNetEvent("pombalDismantle:ApplyStage",function(network,stageId)
-    local vehicle = NetworkGetEntityFromNetworkId(tonumber(network) or 0)
-    local stage = stageConfig(stageId)
-    if vehicle == 0 or not DoesEntityExist(vehicle) or not stage then return end
-    if not requestControl(vehicle,750) then return end
+    local vehicleNet = tonumber(network) or 0
+    if not CurrentSession or vehicleNet <= 0 or vehicleNet ~= CurrentVehicleNet or vehicleNet ~= tonumber(CurrentSession.VehicleNet) then return end
+
+    local stage,stageIndex = stageConfig(stageId)
+    if not stage or not CurrentStage or CurrentStage.Id ~= stageId or tonumber(CurrentSession.Stage) ~= stageIndex then return end
+
+    StageApplying = true
+    local vehicle = sessionVehicle(vehicleNet)
+    if vehicle == 0 or not requestControl(vehicle,2500) or sessionVehicle(vehicleNet) ~= vehicle or not applyVehicleAnchor(vehicle) then
+        StageApplying = false
+        if CurrentSession then
+            TriggerServerEvent("pombalDismantle:Cancel")
+            notify("Nao foi possivel aplicar a peca removida no veiculo.","vermelho")
+        end
+        return
+    end
 
     if stage.Type == "wheel" then
         if BreakOffVehicleWheel then
@@ -357,6 +488,25 @@ RegisterNetEvent("pombalDismantle:ApplyStage",function(network,stageId)
     elseif stage.Type == "engine" then
         SetVehicleEngineOn(vehicle,false,true,true)
         SetVehicleEngineHealth(vehicle,100.0)
+    end
+
+    Wait(0)
+    if not applyVehicleAnchor(vehicle) then
+        StageApplying = false
+        if CurrentSession then
+            TriggerServerEvent("pombalDismantle:Cancel")
+            notify("Nao foi possivel reancorar o veiculo apos remover a peca.","vermelho")
+        end
+        return
+    end
+
+    LastAppliedStageIndex = stageIndex
+    StageApplying = false
+    local nextStage = PendingStageIndex
+    PendingStageIndex = nil
+    if nextStage and CurrentSession and not activateStage(nextStage) then
+        TriggerServerEvent("pombalDismantle:Cancel")
+        notify("Nao foi possivel marcar a proxima peca do desmanche.","vermelho")
     end
 end)
 
