@@ -168,7 +168,5 @@ RegisterCommand("sairtrabalho", function()
         end
         TriggerServerEvent("cfWorks:stopJob")
         ActiveJob = nil
-    else
-        TriggerEvent("Notify", "vermelho", "Você não está em serviço no momento.", 5000)
     end
 end)
