@@ -698,6 +698,86 @@ local List = {
 		Gemstone = 0,
 		Class = "Emergência"
 	},
+	["VRa3"] = {
+		Name = "Audi A3 PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRa4"] = {
+		Name = "Audi A4 PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRq8"] = {
+		Name = "Audi Q8 PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRraptor"] = {
+		Name = "Ford Raptor PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRrs5"] = {
+		Name = "Audi RS5 PMMG",
+		Weight = 20,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRrs6"] = {
+		Name = "Audi RS6 PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRrs6av"] = {
+		Name = "Audi RS6 Avant PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["VRtahoe"] = {
+		Name = "Chevrolet Tahoe PMMG",
+		Weight = 40,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["Wrasprinter"] = {
+		Name = "Ambulância Sprinter SAMU",
+		Weight = 0,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
+	["Wrgle53"] = {
+		Name = "Mercedes-Benz GLE 53 SAMU",
+		Weight = 0,
+		Price = 100,
+		Mode = "Work",
+		Gemstone = 0,
+		Class = "Emergência"
+	},
 	fbi = {
 		Name = "Fbi",
 		Weight = 0,

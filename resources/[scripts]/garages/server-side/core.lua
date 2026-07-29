@@ -144,23 +144,19 @@ local Works = {
 	["Paramedico2"] = {
 		"maverick2"
 	},
-	-- Frota padrao da garagem de viaturas do SAMU Ouro Fino. "ambulance" e o unico
-	-- modelo de ambulancia confirmado no Vehicle.lua da base ("ambulance2" usado no
-	-- Paramedico acima nao esta cadastrado no Vehicle.lua). Trocar/completar aqui
-	-- assim que o pack de veiculos tematico de Minas Gerais for definido.
 	["SamuOuroFino"] = {
-		"ambulance"
+		"Wrasprinter",
+		"Wrgle53"
 	},
 	["Policia"] = {
-		"police",
-		"police2",
-		"police3",
-		"police4",
-		"policeb",
-		"policet",
-		"pranger",
-		"fbi",
-		"fbi2"
+		"VRa3",
+		"VRa4",
+		"VRq8",
+		"VRraptor",
+		"VRrs5",
+		"VRrs6",
+		"VRrs6av",
+		"VRtahoe"
 	},
 	["Policia2"] = {
 		"valkyrie2"
