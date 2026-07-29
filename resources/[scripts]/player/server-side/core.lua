@@ -250,6 +250,16 @@ local Preset = {
 }
 local PoliceServices = { "LSPD","BCSO","SAPR" }
 local PoliceServiceLookup = { LSPD = true, BCSO = true, SAPR = true }
+local LegacyServiceDecals = {
+	["mp_m_freemode_01"] = {
+		[197] = { [12] = true },
+		[58] = { [1] = true }
+	},
+	["mp_f_freemode_01"] = {
+		[209] = { [12] = true },
+		[66] = { [1] = true }
+	}
+}
 local UniformSnapshots = {}
 local UniformCaptureBusy = {}
 local UniformPassportBySource = {}
@@ -287,6 +297,23 @@ local function copyCustomization(Customization)
 	end
 
 	return Slots >= 15 and copyTable(Customization) or nil
+end
+
+local function sanitizeLegacyServiceDecal(Clothes,Model)
+	local ModelDecals = LegacyServiceDecals[Model]
+	local Decals = type(Clothes) == "table" and Clothes.decals or nil
+	if not ModelDecals or type(Decals) ~= "table" then
+		return false
+	end
+
+	local Item = tonumber(Decals.item)
+	local Texture = tonumber(Decals.texture)
+	if not Item or not Texture or not ModelDecals[Item] or not ModelDecals[Item][Texture] then
+		return false
+	end
+
+	Clothes.decals = { item = 0, texture = 0 }
+	return true
 end
 
 local function hasPoliceService(Passport)
@@ -349,7 +376,7 @@ AddEventHandler("player:Preset",function(Number)
 			return
 		end
 
-		Snapshot = { Class = Class, Clothes = Clothes }
+		Snapshot = { Class = Class, Clothes = Clothes, LegacyResidue = sanitizeLegacyServiceDecal(Clothes,Model) }
 		UniformSnapshots[Passport] = Snapshot
 	else
 		Snapshot.Class = Class
@@ -384,7 +411,7 @@ AddEventHandler("player:ServiceLeave",function(_,Passport,Permission)
 		return
 	end
 
-	TriggerClientEvent("skinshop:Apply",CurrentSource,copyTable(Snapshot.Clothes),false)
+	TriggerClientEvent("skinshop:Apply",CurrentSource,copyTable(Snapshot.Clothes),Snapshot.LegacyResidue == true)
 	UniformSnapshots[Passport] = nil
 	UniformCaptureBusy[Passport] = nil
 	if UniformPassportBySource[CurrentSource] == Passport then
