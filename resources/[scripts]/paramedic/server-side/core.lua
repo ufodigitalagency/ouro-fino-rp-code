@@ -250,28 +250,90 @@ local preset = {
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterServerEvent("paramedic:presetBurn")
 AddEventHandler("paramedic:presetBurn",function(entity)
-	local source = source
-	local Passport = vRP.Passport(source)
-	if Passport and vRP.HasService(Passport,"Emergencia") then
-		local Model = vRP.ModelPlayer(entity)
-		if Model == "mp_m_freemode_01" or "mp_f_freemode_01" then
-			TriggerClientEvent("skinshop:Apply",entity,preset["1"][Model],true)
-		end
+	local source = tonumber(source)
+	if not source or source <= 0 then
+		return false
 	end
+
+	local function Denied(Message)
+		TriggerClientEvent("Notify",source,"Atenção",Message,"amarelo",5000)
+
+		return false
+	end
+
+	local Passport = vRP.Passport(source)
+	if not Passport or not vRP.HasService(Passport,"Paramedico") then
+		return Denied("Você não possui permissão.")
+	end
+
+	entity = tonumber(entity)
+	if not entity or entity <= 0 or math.floor(entity) ~= entity then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local Ped = GetPlayerPed(entity)
+	if not Ped or Ped <= 0 or not DoesEntityExist(Ped) then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local ModelHash = GetEntityModel(Ped)
+	if ModelHash ~= GetHashKey("mp_m_freemode_01") and ModelHash ~= GetHashKey("mp_f_freemode_01") then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local Model = vRP.ModelPlayer(entity)
+	if Model == "mp_m_freemode_01" or Model == "mp_f_freemode_01" then
+		TriggerClientEvent("skinshop:Apply",entity,preset["1"][Model],true)
+
+		return true
+	end
+
+	return Denied("Modelo de personagem incompatível.")
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PLAYER:PRESETPLASTER
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterServerEvent("paramedic:presetPlaster")
 AddEventHandler("paramedic:presetPlaster",function(entity)
-	local source = source
-	local Passport = vRP.Passport(source)
-	if Passport and vRP.HasService(Passport,"Emergencia") then
-		local Model = vRP.ModelPlayer(entity)
-		if Model == "mp_m_freemode_01" or "mp_f_freemode_01" then
-			TriggerClientEvent("skinshop:Apply",entity,preset["2"][Model],true)
-		end
+	local source = tonumber(source)
+	if not source or source <= 0 then
+		return false
 	end
+
+	local function Denied(Message)
+		TriggerClientEvent("Notify",source,"Atenção",Message,"amarelo",5000)
+
+		return false
+	end
+
+	local Passport = vRP.Passport(source)
+	if not Passport or not vRP.HasService(Passport,"Paramedico") then
+		return Denied("Você não possui permissão.")
+	end
+
+	entity = tonumber(entity)
+	if not entity or entity <= 0 or math.floor(entity) ~= entity then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local Ped = GetPlayerPed(entity)
+	if not Ped or Ped <= 0 or not DoesEntityExist(Ped) then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local ModelHash = GetEntityModel(Ped)
+	if ModelHash ~= GetHashKey("mp_m_freemode_01") and ModelHash ~= GetHashKey("mp_f_freemode_01") then
+		return Denied("Modelo de personagem incompatível.")
+	end
+
+	local Model = vRP.ModelPlayer(entity)
+	if Model == "mp_m_freemode_01" or Model == "mp_f_freemode_01" then
+		TriggerClientEvent("skinshop:Apply",entity,preset["2"][Model],true)
+
+		return true
+	end
+
+	return Denied("Modelo de personagem incompatível.")
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PLAYER:EXTRACTBLOOD
