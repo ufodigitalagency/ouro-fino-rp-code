@@ -3,6 +3,27 @@
 -----------------------------------------------------------------------------------------------------------------------------------------
 local Timer = GetGameTimer()
 -----------------------------------------------------------------------------------------------------------------------------------------
+-- CLOSEST NPC
+-----------------------------------------------------------------------------------------------------------------------------------------
+local function closestNpc(Radius)
+	local Selected = false
+	local Ped = PlayerPedId()
+	local Coords = GetEntityCoords(Ped)
+	local MaxDistance = (tonumber(Radius) or 2.0) + 0.0001
+
+	for _,Entitys in ipairs(GetGamePool("CPed")) do
+		if Entitys ~= 0 and Entitys ~= Ped and DoesEntityExist(Entitys) and IsEntityAPed(Entitys) and not IsPedAPlayer(Entitys) and not IsEntityDead(Entitys) and not IsPedDeadOrDying(Entitys,true) and NetworkGetEntityIsNetworked(Entitys) and not DecorGetBool(Entitys,"CREATIVE_PED") and not IsPedInAnyVehicle(Entitys) and GetPedType(Entitys) ~= 28 then
+			local EntityDistance = #(Coords - GetEntityCoords(Entitys))
+			if EntityDistance < MaxDistance then
+				Selected = Entitys
+				MaxDistance = EntityDistance
+			end
+		end
+	end
+
+	return Selected
+end
+-----------------------------------------------------------------------------------------------------------------------------------------
 -- THREADSYSTEM
 -----------------------------------------------------------------------------------------------------------------------------------------
 CreateThread(function()
@@ -13,8 +34,8 @@ CreateThread(function()
 
 		if not IsPedInAnyVehicle(Ped) and IsPedArmed(Ped,6) and IsPlayerFreeAiming(Pid) then
 			local Progress = 1000
-			local Entitys = ClosestPed(2)
-			if Entitys and GetGameTimer() >= Timer and GetVehiclePedIsIn(Entitys,true) == 0 and not Entity(Entitys)["state"]["Steal"] then
+			local Entitys = closestNpc(2)
+			if Entitys and Entitys ~= 0 and DoesEntityExist(Entitys) and IsEntityAPed(Entitys) and not IsPedAPlayer(Entitys) and GetGameTimer() >= Timer and GetVehiclePedIsIn(Entitys,true) == 0 and not Entity(Entitys)["state"]["Steal"] then
 				Timer = GetGameTimer() + 5000
 
 				NetworkRequestControlOfEntity(Entitys)
