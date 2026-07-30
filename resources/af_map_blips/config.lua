@@ -29,6 +29,8 @@ Config.NavAliases = {
 	pombal = "favela_pombal",
 	cdd = "favela_pombal",
 	saojudas = "favela_sao_judas",
+	ofc = "ofc_fight_club",
+	clubedaluta = "ofc_fight_club",
 	chapadao = "favela_sao_judas",
 	arsenalpombal = "pombal_arsenal",
 	arsenalsaojudas = "sao_judas_arsenal"
@@ -90,6 +92,7 @@ Config.Blips = {
 	{ id = "pombal_arsenal", enabled = true, map = true, marker = true, interactionDistance = 2.75, name = "Arsenal do Pombal", sprite = 76, color = 1, scale = 0.58, coords = { x = 2538.11, y = 2521.55, z = 46.20 } },
 	{ id = "sao_judas_arsenal", enabled = true, map = true, marker = true, interactionDistance = 2.75, name = "Arsenal de São Judas", sprite = 76, color = 2, scale = 0.58, coords = { x = -484.78, y = 1606.37, z = 369.58 } },
 	{ id = "taxista", enabled = true, map = false, marker = false, name = "Central de Taxi", sprite = 198, color = 62, scale = 0.55, coords = { x = 895.17, y = -179.31, z = 74.70 } },
+	{ id = "ofc_fight_club", enabled = true, marker = false, name = "OFC - Ouro Fight Club", sprite = 311, color = 1, scale = 0.72, shortRange = true, coords = { x = -507.49, y = -1725.20, z = 19.33 } },
 
     { id = "roupas_1", enabled = true, name = "Loja de Roupas", sprite = 366, color = 62, scale = 0.52, coords = { x = 414.86, y = -807.57, z = 29.34 } },
     { id = "barbearia_1", enabled = true, name = "Barbearia", sprite = 71, color = 62, scale = 0.5, coords = { x = -815.12, y = -184.15, z = 37.57 } },
