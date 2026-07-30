@@ -22,6 +22,7 @@ local Changed = {}
 local Searched = {}
 local Respawns = {}
 local Propertys = {}
+local Storing = {}
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -248,7 +249,7 @@ end
 -- ENTITYREMOVED
 -----------------------------------------------------------------------------------------------------------------------------------------
 AddEventHandler("entityRemoved",function(Entitys)
-	if IsPedAPlayer(Entitys) or GetEntityType(Entitys) ~= 2 then
+	if Storing[Entitys] or IsPedAPlayer(Entitys) or GetEntityType(Entitys) ~= 2 then
 		return false
 	end
 
@@ -1021,79 +1022,260 @@ end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- DELETE
 -----------------------------------------------------------------------------------------------------------------------------------------
-function Lil.Delete(Network,Doors,Tyres,Plate)
-	local Networked = NetworkGetEntityFromNetworkId(Network)
-	if not DoesEntityExist(Networked) or IsPedAPlayer(Networked) or GetEntityType(Networked) ~= 2 then
-		return false
+local function StoragePlate(Plate)
+	if type(Plate) ~= "string" then
+		return ""
 	end
 
-	local Primary = Changed[Plate] and Plate or false
-	if Primary then
-		Plate = Changed[Plate]
-		Changed[Primary] = nil
+	return Plate:gsub("^%s*(.-)%s*$","%1"):upper()
+end
+
+local function StorageLog(Reason,Passport,Network,Plate,Entitys)
+	local PlateLog = tostring(Plate or ""):gsub("[%c]","")
+	local Exists = Entitys and Entitys ~= 0 and DoesEntityExist(Entitys) or false
+	print(("[garages] armazenamento negado reason=%s passport=%s network=%s plate=%s entity=%s exists=%s"):format(tostring(Reason),tostring(Passport or "none"),tostring(Network or 0),PlateLog,tostring(Entitys or 0),tostring(Exists)))
+
+	return false,Reason
+end
+
+local function StoragePlateKey(Data,Plate)
+	if Data[Plate] ~= nil then
+		return Plate
 	end
 
-	if Spawn[Plate] then
-		local Name = Spawn[Plate][2]
-		local Passport = Spawn[Plate][1]
-		if vRP.SelectVehicle(Passport,Name) then
-			local Health = GetEntityHealth(Networked)
-			local Body = GetVehicleBodyHealth(Networked)
-			local Engine = GetVehicleEngineHealth(Networked)
-
-			local Windows = {}
-			for Number = 0,5 do
-				Windows[Number] = IsVehicleWindowIntact(Networked,Number)
+	local Normalized = StoragePlate(Plate)
+	local Match = nil
+	for Key in pairs(Data) do
+		if StoragePlate(Key) == Normalized then
+			if Match and Match ~= Key then
+				return false,"plate_ambiguous"
 			end
 
-			local State = Entity(Networked).state
-			local Nitro = State.Nitro or 0
-			local Fuel = State.Fuel or 0
-
-			local DoorsJson = json.encode(Doors)
-			local WindowsJson = json.encode(Windows)
-			local TyresJson = json.encode(Tyres)
-
-			vRP.Update("vehicles/updateVehicles",{ Passport = Passport, Vehicle = Name, Nitro = Nitro, Engine = math.floor(Engine), Body = math.floor(Body), Health = math.floor(Health), Fuel = Fuel, Doors = DoorsJson, Windows = WindowsJson, Tyres = TyresJson })
+			Match = Key
 		end
 	end
 
-	TriggerEvent("garages:Delete",Network,Plate)
-
-	if Primary then
-		TriggerEvent("garages:Delete",Network,Primary)
-	end
+	return Match
 end
------------------------------------------------------------------------------------------------------------------------------------------
--- GARAGES:DELETED
------------------------------------------------------------------------------------------------------------------------------------------
-RegisterServerEvent("garages:Deleted")
-AddEventHandler("garages:Deleted",function(Network,Plate)
-	Lil.Delete(Network,{},{},Plate)
-end)
------------------------------------------------------------------------------------------------------------------------------------------
--- GARAGES:DELETE
------------------------------------------------------------------------------------------------------------------------------------------
-RegisterServerEvent("garages:Delete")
-AddEventHandler("garages:Delete",function(Network,Plate)
-	if not Network or not Plate then
-		return false
+
+local function StorageSpawn(Plate)
+	local Primary,Error = StoragePlateKey(Changed,Plate)
+	if Error then
+		return false,false,false,Error
 	end
 
-	Signal[Plate] = nil
+	local SpawnPlate = Primary and Changed[Primary] or Plate
+	local Registered
+	Registered,Error = StoragePlateKey(Spawn,SpawnPlate)
+	if Error then
+		return false,false,false,Error
+	end
 
-	if Changed[Plate] then
-		local Backup = Changed[Plate]
+	if Registered then
+		SpawnPlate = Registered
+		return SpawnPlate,Primary,Spawn[SpawnPlate]
+	end
+
+	return SpawnPlate,Primary,false
+end
+
+local function StoragePlateMatches(EntityPlate,Plate,SpawnPlate,Primary)
+	local Normalized = StoragePlate(EntityPlate)
+	if Normalized == StoragePlate(Plate) or Normalized == StoragePlate(SpawnPlate) or (Primary and Normalized == StoragePlate(Primary)) then
+		return true
+	end
+
+	local ChangedPlate = StoragePlateKey(Changed,EntityPlate)
+	return ChangedPlate and StoragePlate(Changed[ChangedPlate]) == StoragePlate(SpawnPlate) or false
+end
+
+local function StorageEntity(Network)
+	local Timeout = GetGameTimer() + 750
+
+	repeat
+		local Entitys = NetworkGetEntityFromNetworkId(Network)
+		if Entitys and Entitys ~= 0 and DoesEntityExist(Entitys) then
+			if IsPedAPlayer(Entitys) or GetEntityType(Entitys) ~= 2 then
+				return false,"vehicle_not_found"
+			end
+
+			return Entitys
+		end
+
+		Wait(50)
+	until GetGameTimer() >= Timeout
+
+	return false,"entity_not_synced"
+end
+
+local function StorageDeleteEntity(Entitys)
+	Storing[Entitys] = true
+	local Timeout = GetGameTimer() + 750
+
+	repeat
+		DeleteEntity(Entitys)
+		if not DoesEntityExist(Entitys) then
+			return true
+		end
+
+		Wait(50)
+	until GetGameTimer() >= Timeout
+
+	Storing[Entitys] = nil
+	return false
+end
+
+local function StorageCleanup(Plate)
+	Signal[Plate] = nil
+	Respawns[Plate] = nil
+
+	local Backup = Changed[Plate]
+	if Backup then
+		Signal[Backup] = nil
+		Respawns[Backup] = nil
 		Spawn[Backup] = nil
 		Changed[Plate] = nil
 	end
 
 	Spawn[Plate] = nil
+end
 
-	local Entity = NetworkGetEntityFromNetworkId(Network)
-	if Entity and DoesEntityExist(Entity) and GetEntityType(Entity) == 2 and not IsPedAPlayer(Entity) then
-		DeleteEntity(Entity)
+local function StoreVehicle(Source,Network,Doors,Tyres,Plate,Trusted)
+	local Passport = Source and vRP.Passport(Source) or nil
+	if not Trusted and (not Source or Source <= 0 or not Passport) then
+		return StorageLog("unauthorized",Passport,Network,Plate)
 	end
+
+	Network = tonumber(Network)
+	if not Network or Network <= 0 then
+		return StorageLog("invalid_network",Passport,Network,Plate)
+	end
+
+	if StoragePlate(Plate) == "" then
+		return StorageLog("plate_not_registered",Passport,Network,Plate)
+	end
+
+	if Doors ~= nil and type(Doors) ~= "table" then
+		return StorageLog("storage_failed",Passport,Network,Plate)
+	end
+
+	if Tyres ~= nil and type(Tyres) ~= "table" then
+		return StorageLog("storage_failed",Passport,Network,Plate)
+	end
+
+	Doors = Doors or {}
+	Tyres = Tyres or {}
+
+	local Networked,Reason = StorageEntity(Network)
+	if not Networked then
+		return StorageLog(Reason,Passport,Network,Plate)
+	end
+
+	local SpawnPlate,Primary,Data
+	SpawnPlate,Primary,Data,Reason = StorageSpawn(Plate)
+	if Reason then
+		return StorageLog(Reason,Passport,Network,Plate,Networked)
+	end
+
+	local IsAdmin = Passport and vRP.HasGroup(Passport,"Admin") or false
+	if Entity(Networked).state.Tow and not Trusted and not IsAdmin then
+		return StorageLog("unauthorized",Passport,Network,Plate,Networked)
+	end
+
+	if not Data and not Trusted and not IsAdmin then
+		return StorageLog("plate_not_registered",Passport,Network,Plate,Networked)
+	end
+
+	if Data then
+		if (Data[3] and Data[3] ~= Networked) or (Data[4] and tonumber(Data[4]) ~= Network) then
+			return StorageLog("unauthorized",Passport,Network,Plate,Networked)
+		end
+
+		if not Trusted and not IsAdmin and tostring(Data[1]) ~= tostring(Passport) then
+			return StorageLog("unauthorized",Passport,Network,Plate,Networked)
+		end
+	end
+
+	local EntityPlate = GetVehicleNumberPlateText(Networked)
+	if not StoragePlateMatches(EntityPlate,Plate,SpawnPlate,Primary) then
+		return StorageLog("unauthorized",Passport,Network,Plate,Networked)
+	end
+
+	if Data then
+		local VehiclePassport = Data[1]
+		local Name = Data[2]
+		local Registered = vRP.SelectVehicle(VehiclePassport,Name)
+		if Registered then
+			local Health = GetEntityHealth(Networked)
+			local Body = GetVehicleBodyHealth(Networked)
+			local Engine = GetVehicleEngineHealth(Networked)
+			local Windows = {}
+
+			for Number = 0,5 do
+				Windows[Number] = IsVehicleWindowIntact(Networked,Number)
+			end
+
+			local State = Entity(Networked).state
+			local Persisted,Result = pcall(vRP.Update,"vehicles/updateVehicles",{ Passport = VehiclePassport, Vehicle = Name, Nitro = State.Nitro or 0, Engine = math.floor(Engine), Body = math.floor(Body), Health = math.floor(Health), Fuel = State.Fuel or 0, Doors = json.encode(Doors), Windows = json.encode(Windows), Tyres = json.encode(Tyres) })
+			if not Persisted or Result == nil or Result == false then
+				return StorageLog("storage_failed",Passport or VehiclePassport,Network,Plate,Networked)
+			end
+		elseif not Trusted and not IsAdmin then
+			return StorageLog("plate_not_registered",Passport,Network,Plate,Networked)
+		end
+	end
+
+	if not StorageDeleteEntity(Networked) then
+		return StorageLog("storage_failed",Passport or (Data and Data[1]),Network,Plate,Networked)
+	end
+
+	StorageCleanup(SpawnPlate)
+	if Primary then
+		StorageCleanup(Primary)
+	end
+
+	TriggerEvent("garages:Delete",Network,SpawnPlate)
+
+	if Primary then
+		TriggerEvent("garages:Delete",Network,Primary)
+	end
+
+	Storing[Networked] = nil
+	return true
+end
+
+function Lil.Delete(Network,Doors,Tyres,Plate)
+	local Source = tonumber(source)
+	return StoreVehicle(Source,Network,Doors,Tyres,Plate,false)
+end
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- GARAGES:DELETED
+-----------------------------------------------------------------------------------------------------------------------------------------
+AddEventHandler("garages:Deleted",function(Network,Plate)
+	StoreVehicle(nil,Network,{},{},Plate,true)
+end)
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- GARAGES:DELETE
+-----------------------------------------------------------------------------------------------------------------------------------------
+AddEventHandler("garages:Delete",function(Network,Plate)
+	Network = tonumber(Network)
+	if not Network or Network <= 0 or StoragePlate(Plate) == "" then
+		return false
+	end
+
+	local Entitys = NetworkGetEntityFromNetworkId(Network)
+	if Entitys and Entitys ~= 0 and DoesEntityExist(Entitys) then
+		if IsPedAPlayer(Entitys) or GetEntityType(Entitys) ~= 2 or not StorageDeleteEntity(Entitys) then
+			return false
+		end
+	end
+
+	StorageCleanup(Plate)
+	if Entitys and Entitys ~= 0 then
+		Storing[Entitys] = nil
+	end
+
+	return true
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:PROPERTYS

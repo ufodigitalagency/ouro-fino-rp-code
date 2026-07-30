@@ -18,6 +18,7 @@ local Opened = false
 local Searched = nil
 local Hotwired = false
 local Spam = GetGameTimer()
+local StorageInProgress = false
 local Anim = "machinic_loop_mechandplayer"
 local Dict = "anim@amb@clubhouse@tutorial@bkr_tut_ig3@"
 
@@ -556,25 +557,172 @@ end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:DELETE
 -----------------------------------------------------------------------------------------------------------------------------------------
+local function StoragePlate(Plate)
+	if type(Plate) ~= "string" then
+		return ""
+	end
+
+	return Plate:gsub("^%s*(.-)%s*$","%1"):upper()
+end
+
+local function StorageVehicleValid(Vehicle)
+	return type(Vehicle) == "number" and Vehicle > 0 and DoesEntityExist(Vehicle) and GetEntityType(Vehicle) == 2 and IsEntityAVehicle(Vehicle) and not IsPedAPlayer(Vehicle)
+end
+
+local function StorageVehicleByPlate(Plate)
+	local Normalized = StoragePlate(Plate)
+	if Normalized == "" then
+		return false,"vehicle_not_found"
+	end
+
+	local Selected = false
+	for _,Vehicle in ipairs(GetGamePool("CVehicle")) do
+		if StorageVehicleValid(Vehicle) and StoragePlate(GetVehicleNumberPlateText(Vehicle)) == Normalized then
+			if Selected and Selected ~= Vehicle then
+				return false,"multiple_vehicles"
+			end
+
+			Selected = Vehicle
+		end
+	end
+
+	return Selected,Selected and nil or "vehicle_not_found"
+end
+
+local function ResolveStorageVehicle(Reference)
+	if StorageVehicleValid(Reference) then
+		return Reference
+	end
+
+	if type(Reference) == "number" and Reference > 0 then
+		if DoesEntityExist(Reference) then
+			return false,"vehicle_not_found"
+		end
+
+		local Vehicle = NetworkGetEntityFromNetworkId(Reference)
+		return StorageVehicleValid(Vehicle) and Vehicle or false,"vehicle_not_found"
+	end
+
+	if type(Reference) == "string" and Reference ~= "" then
+		return StorageVehicleByPlate(Reference)
+	end
+
+	if Reference ~= nil and Reference ~= false and Reference ~= "" then
+		return false,"vehicle_not_found"
+	end
+
+	local Ped = PlayerPedId()
+	if IsPedInAnyVehicle(Ped,false) then
+		local Vehicle = GetVehiclePedIsIn(Ped,false)
+		return StorageVehicleValid(Vehicle) and Vehicle or false,"vehicle_not_found"
+	end
+
+	local Vehicle = vRP.ClosestVehicle(15)
+	if not StorageVehicleValid(Vehicle) then
+		return false,"vehicle_not_found"
+	end
+
+	local Coords = GetEntityCoords(Ped)
+	local Nearby = 0
+	for _,Candidate in ipairs(GetGamePool("CVehicle")) do
+		if StorageVehicleValid(Candidate) and #(Coords - GetEntityCoords(Candidate)) <= 15.0001 then
+			Nearby = Nearby + 1
+			if Nearby > 1 then
+				return false,"multiple_vehicles"
+			end
+		end
+	end
+
+	return Vehicle
+end
+
+local function ResolveStorageNetwork(Vehicle)
+	local Timeout = GetGameTimer() + 750
+
+	repeat
+		if not StorageVehicleValid(Vehicle) then
+			return false,"entity_not_synced"
+		end
+
+		if not NetworkGetEntityIsNetworked(Vehicle) then
+			NetworkRequestControlOfEntity(Vehicle)
+			if NetworkHasControlOfEntity(Vehicle) then
+				NetworkRegisterEntityAsNetworked(Vehicle)
+			end
+		else
+			local Network = NetworkGetNetworkIdFromEntity(Vehicle)
+			if Network and Network > 0 and NetworkDoesEntityExistWithNetworkId(Network) then
+				return Network
+			end
+		end
+
+		Wait(25)
+	until GetGameTimer() >= Timeout
+
+	return false,"invalid_network"
+end
+
+local function StorageFailure(Reason)
+	local Message = "Não foi possível guardar o veículo. Posicione-o próximo e tente novamente."
+	if Reason == "multiple_vehicles" then
+		Message = "Entre no veículo que deseja guardar e tente novamente."
+	elseif Reason == "unauthorized" then
+		Message = "Você não pode guardar este veículo."
+	end
+
+	TriggerEvent("Notify","Garagem",Message,"amarelo",5000)
+end
+
+local function StoreVehicle(Reference)
+	local Vehicle,Reason = ResolveStorageVehicle(Reference)
+	if not Vehicle then
+		return false,Reason
+	end
+
+	local Network
+	Network,Reason = ResolveStorageNetwork(Vehicle)
+	if not Network then
+		return false,Reason
+	end
+
+	if Entity(Vehicle).state.Tow and not LocalPlayer.state.Admin then
+		return false,"unauthorized"
+	end
+
+	local Plate = GetVehicleNumberPlateText(Vehicle)
+	if StoragePlate(Plate) == "" then
+		return false,"plate_not_registered"
+	end
+
+	local Doors = {}
+	for Number = 0,5 do
+		Doors[Number] = IsVehicleDoorDamaged(Vehicle,Number)
+	end
+
+	local Tyres = {}
+	for Number = 0,7 do
+		Tyres[Number] = (GetTyreHealth(Vehicle,Number) ~= 1000.0 and true or false)
+	end
+
+	return vSERVER.Delete(Network,Doors,Tyres,Plate)
+end
+
 RegisterNetEvent("garages:Delete")
 AddEventHandler("garages:Delete",function(Vehicle)
-	if not Vehicle or Vehicle == "" then
-		Vehicle = vRP.ClosestVehicle(15)
+	if StorageInProgress then
+		return false
 	end
 
-	if IsEntityAVehicle(Vehicle) and (not Entity(Vehicle).state.Tow or LocalPlayer.state.Admin) then
-		local Doors = {}
-		for Number = 0,5 do
-			Doors[Number] = IsVehicleDoorDamaged(Vehicle,Number)
-		end
+	StorageInProgress = true
+	local Executed,Stored,Reason = pcall(StoreVehicle,Vehicle)
+	StorageInProgress = false
 
-		local Tyres = {}
-		for Number = 0,7 do
-			Tyres[Number] = (GetTyreHealth(Vehicle,Number) ~= 1000.0 and true or false)
-		end
-
-		vSERVER.Delete(NetworkGetNetworkIdFromEntity(Vehicle),Doors,Tyres,GetVehicleNumberPlateText(Vehicle))
+	if not Executed or not Stored then
+		StorageFailure(Executed and Reason or "storage_failed")
+		return false
 	end
+
+	return true
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- SEARCHBLIP
