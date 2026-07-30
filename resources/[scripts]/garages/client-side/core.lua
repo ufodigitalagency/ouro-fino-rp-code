@@ -556,25 +556,142 @@ end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:DELETE
 -----------------------------------------------------------------------------------------------------------------------------------------
+local StorageSlotRadius = 2.75
+
+local function StorageVehicleValid(Vehicle)
+	if not Vehicle or Vehicle == 0 or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 or not IsEntityAVehicle(Vehicle) then
+		return false
+	end
+
+	return not Entity(Vehicle).state.Tow or LocalPlayer.state.Admin
+end
+
+local function StorageSlotVehicles()
+	local Garage = Opened and Garages[tostring(Opened)]
+	if not Garage then
+		return {}
+	end
+
+	local Slots = {}
+	for Slot,Data in pairs(Garage) do
+		local Coords = tonumber(Slot) and ReadCoords(Data)
+		if Coords then
+			Slots[#Slots + 1] = Coords
+		end
+	end
+
+	local Candidates = {}
+	local Added = {}
+
+	for _,Vehicle in ipairs(GetGamePool("CVehicle")) do
+		if StorageVehicleValid(Vehicle) then
+			local VehicleCoords = GetEntityCoords(Vehicle)
+			for _,SlotCoords in ipairs(Slots) do
+				if #(VehicleCoords - SlotCoords) <= StorageSlotRadius then
+					if not Added[Vehicle] then
+						Added[Vehicle] = true
+						Candidates[#Candidates + 1] = Vehicle
+					end
+
+					break
+				end
+			end
+		end
+	end
+
+	return Candidates
+end
+
+local function StorageNetwork(Vehicle)
+	local Timeout = GetGameTimer() + 750
+
+	repeat
+		if not DoesEntityExist(Vehicle) then
+			return nil
+		end
+
+		local Network = NetworkGetNetworkIdFromEntity(Vehicle)
+		if Network and Network > 0 and NetworkDoesNetworkIdExist(Network) and NetworkGetEntityFromNetworkId(Network) == Vehicle then
+			return Network
+		end
+
+		Wait(50)
+	until GetGameTimer() >= Timeout
+
+	return nil
+end
+
 RegisterNetEvent("garages:Delete")
-AddEventHandler("garages:Delete",function(Vehicle)
-	if not Vehicle or Vehicle == "" then
-		Vehicle = vRP.ClosestVehicle(15)
-	end
-
-	if IsEntityAVehicle(Vehicle) and (not Entity(Vehicle).state.Tow or LocalPlayer.state.Admin) then
-		local Doors = {}
-		for Number = 0,5 do
-			Doors[Number] = IsVehicleDoorDamaged(Vehicle,Number)
+AddEventHandler("garages:Delete",function(Data,FromGarage)
+	if not FromGarage then
+		local Vehicle = Data
+		if not Vehicle or Vehicle == "" then
+			Vehicle = vRP.ClosestVehicle(15)
 		end
 
-		local Tyres = {}
-		for Number = 0,7 do
-			Tyres[Number] = (GetTyreHealth(Vehicle,Number) ~= 1000.0 and true or false)
+		if IsEntityAVehicle(Vehicle) and (not Entity(Vehicle).state.Tow or LocalPlayer.state.Admin) then
+			local Doors = {}
+			for Number = 0,5 do
+				Doors[Number] = IsVehicleDoorDamaged(Vehicle,Number)
+			end
+
+			local Tyres = {}
+			for Number = 0,7 do
+				Tyres[Number] = (GetTyreHealth(Vehicle,Number) ~= 1000.0 and true or false)
+			end
+
+			vSERVER.Delete(NetworkGetNetworkIdFromEntity(Vehicle),Doors,Tyres,GetVehicleNumberPlateText(Vehicle))
 		end
 
-		vSERVER.Delete(NetworkGetNetworkIdFromEntity(Vehicle),Doors,Tyres,GetVehicleNumberPlateText(Vehicle))
+		return
 	end
+
+	local Vehicle
+	local Ped = PlayerPedId()
+	local CurrentVehicle = GetVehiclePedIsIn(Ped,false)
+
+	if CurrentVehicle ~= 0 then
+		if not StorageVehicleValid(CurrentVehicle) then
+			TriggerEvent("Notify","Atenção","Este veículo não pode ser guardado.","default",5000)
+			return
+		end
+
+		Vehicle = CurrentVehicle
+	elseif Opened then
+		local Candidates = StorageSlotVehicles()
+		if #Candidates == 1 then
+			Vehicle = Candidates[1]
+		elseif #Candidates > 1 then
+			TriggerEvent("Notify","Atenção","Entre no veículo que deseja guardar e tente novamente.","default",5000)
+			return
+		else
+			TriggerEvent("Notify","Atenção","Posicione o veículo em uma das vagas da garagem e tente novamente.","default",5000)
+			return
+		end
+	end
+
+	if not StorageVehicleValid(Vehicle) then
+		TriggerEvent("Notify","Atenção","Não foi possível identificar um veículo válido.","default",5000)
+		return
+	end
+
+	local Network = StorageNetwork(Vehicle)
+	if not Network then
+		TriggerEvent("Notify","Atenção","Não foi possível sincronizar o veículo. Tente novamente.","default",5000)
+		return
+	end
+
+	local Doors = {}
+	for Number = 0,5 do
+		Doors[Number] = IsVehicleDoorDamaged(Vehicle,Number)
+	end
+
+	local Tyres = {}
+	for Number = 0,7 do
+		Tyres[Number] = (GetTyreHealth(Vehicle,Number) ~= 1000.0 and true or false)
+	end
+
+	vSERVER.Delete(Network,Doors,Tyres,GetVehicleNumberPlateText(Vehicle))
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- SEARCHBLIP
@@ -793,7 +910,7 @@ end)
 -- DELETE
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterNUICallback("Delete",function(Data,Callback)
-	TriggerEvent("garages:Delete")
+	TriggerEvent("garages:Delete",nil,true)
 
 	Callback("Ok")
 end)
