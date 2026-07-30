@@ -177,20 +177,20 @@ end)
 local Preset = {
 	["1"] = {
         ["mp_m_freemode_01"] = {
-            ["hat"] = { item = -1, texture = 0 },
-            ["pants"] = { item = 195, texture = 0 },
-            ["vest"] = { item = 65, texture = 0 },
+            ["hat"] = { item = 58, texture = 2 },
+            ["pants"] = { item = 59, texture = 7 },
+            ["vest"] = { item = 23, texture = 9 },
             ["bracelet"] = { item = -1, texture = 0 },
             ["backpack"] = { item = 0, texture = 0 },
-            ["decals"] = { item = 197, texture = 12 },
+            ["decals"] = { item = 70, texture = 1 },
             ["mask"] = { item = 0, texture = 0 },
-            ["shoes"] = { item = 25, texture = 0 },
-            ["tshirt"] = { item = 15, texture = 0 },
-            ["torso"] = { item = 548, texture = 0 },
-            ["accessory"] = { item = 183, texture = 0 },
+            ["shoes"] = { item = 24, texture = 0 },
+            ["tshirt"] = { item = 122, texture = 0 },
+            ["torso"] = { item = 318, texture = 3 },
+            ["accessory"] = { item = 125, texture = 0 },
             ["watch"] = { item = -1, texture = 0 },
-            ["arms"] = { item = 22, texture = 0 },
-            ["glass"] = { item = 0, texture = 0 },
+            ["arms"] = { item = 11, texture = 0 },
+            ["glass"] = { item = 5, texture = 5 },
             ["ear"] = { item = -1, texture = 0 }
         },
         ["mp_f_freemode_01"] = {
@@ -263,6 +263,10 @@ local LegacyServiceDecals = {
 local UniformSnapshots = {}
 local UniformCaptureBusy = {}
 local UniformPassportBySource = {}
+local PoliceModels = {
+	[GetHashKey("mp_m_freemode_01")] = "mp_m_freemode_01",
+	[GetHashKey("mp_f_freemode_01")] = "mp_f_freemode_01"
+}
 
 local function copyTable(Value,Seen)
 	if type(Value) ~= "table" then
@@ -326,6 +330,59 @@ local function hasPoliceService(Passport)
 	return false
 end
 
+local function policeServiceContext(Passport)
+	local Active = {}
+	local ResolvedLevel
+
+	for _,Permission in ipairs(PoliceServices) do
+		local ServiceLevel = tonumber(vRP.HasService(Passport,Permission))
+		if ServiceLevel then
+			local Level = tonumber(vRP.HasPermission(Passport,Permission))
+			local Hierarchy = vRP.Hierarchy(Permission)
+			local Maximum = type(Hierarchy) == "table" and #Hierarchy or 0
+			if not Level or Level ~= math.floor(Level) or Level < 1 or Level > Maximum or ServiceLevel ~= Level then
+				return nil,"invalid"
+			end
+
+			if ResolvedLevel and ResolvedLevel ~= Level then
+				return nil,"conflict"
+			end
+
+			ResolvedLevel = Level
+			Active[#Active + 1] = Permission
+		end
+	end
+
+	if #Active == 0 then
+		return nil,"inactive"
+	end
+
+	return { Groups = table.concat(Active,"|"), Level = ResolvedLevel }
+end
+
+local function policeModel(source)
+	local Ped = GetPlayerPed(source)
+	if not Ped or Ped <= 0 or not DoesEntityExist(Ped) then
+		return nil
+	end
+
+	return PoliceModels[GetEntityModel(Ped)]
+end
+
+local function notifyPoliceFailure(source,Reason)
+	if Reason == "conflict" then
+		TriggerClientEvent("Notify",source,"Fardamento","Existem serviços policiais ativos com níveis diferentes. Finalize os serviços adicionais e tente novamente.","vermelho",5000)
+	elseif Reason == "invalid" then
+		TriggerClientEvent("Notify",source,"Fardamento","Não foi possível validar seu nível hierárquico policial.","vermelho",5000)
+	elseif Reason == "model" then
+		TriggerClientEvent("Notify",source,"Fardamento","Este modelo de personagem não é compatível com o fardamento policial.","vermelho",5000)
+	elseif Reason == "changed" then
+		TriggerClientEvent("Notify",source,"Fardamento","Seu contexto de serviço mudou. Tente novamente.","vermelho",5000)
+	else
+		TriggerClientEvent("Notify",source,"Fardamento","Você precisa estar em serviço policial para utilizar este fardamento.","vermelho",5000)
+	end
+end
+
 local function uniformClass(Passport,Number)
 	if Number == "1" and hasPoliceService(Passport) then
 		return "Police"
@@ -346,8 +403,27 @@ AddEventHandler("player:Preset",function(Number)
 	end
 
 	local Passport = vRP.Passport(source)
-	local Class = Passport and uniformClass(Passport,Number) or nil
-	local Model = Class and vRP.ModelPlayer(source) or nil
+	local Class,Model,PoliceContext
+	if Passport and Number == "1" then
+		local Reason
+		PoliceContext,Reason = policeServiceContext(Passport)
+		if not PoliceContext then
+			notifyPoliceFailure(source,Reason)
+			return
+		end
+
+		Model = policeModel(source)
+		if not Model then
+			notifyPoliceFailure(source,"model")
+			return
+		end
+
+		Class = "Police"
+	else
+		Class = Passport and uniformClass(Passport,Number) or nil
+		Model = Class and vRP.ModelPlayer(source) or nil
+	end
+
 	if not Passport or not Class or not Model or not Preset[Number][Model] then
 		return
 	end
@@ -366,7 +442,19 @@ AddEventHandler("player:Preset",function(Number)
 		UniformCaptureBusy[Passport] = nil
 
 		local CurrentPassport = vRP.Passport(source)
-		if not CurrentPassport or tostring(CurrentPassport) ~= Passport or uniformClass(Passport,Number) ~= Class or vRP.ModelPlayer(source) ~= Model then
+		local ContextValid
+		if Number == "1" then
+			local CurrentContext = policeServiceContext(Passport)
+			ContextValid = CurrentContext and CurrentContext.Groups == PoliceContext.Groups and CurrentContext.Level == PoliceContext.Level and policeModel(source) == Model
+		else
+			ContextValid = uniformClass(Passport,Number) == Class and vRP.ModelPlayer(source) == Model
+		end
+
+		if not CurrentPassport or tostring(CurrentPassport) ~= Passport or not ContextValid then
+			if CurrentPassport and tostring(CurrentPassport) == Passport and Number == "1" then
+				notifyPoliceFailure(source,"changed")
+			end
+
 			return
 		end
 
@@ -378,12 +466,18 @@ AddEventHandler("player:Preset",function(Number)
 
 		Snapshot = { Class = Class, Clothes = Clothes, LegacyResidue = sanitizeLegacyServiceDecal(Clothes,Model) }
 		UniformSnapshots[Passport] = Snapshot
-	else
-		Snapshot.Class = Class
+	elseif Snapshot.Class ~= Class then
+		TriggerClientEvent("Notify",source,"Fardamento","Finalize o serviço atual antes de aplicar outro fardamento institucional.","vermelho",5000)
+		return
+	end
+
+	local Uniform = copyTable(Preset[Number][Model])
+	if Number == "1" and Model == "mp_m_freemode_01" then
+		Uniform.hat = PoliceContext.Level <= 3 and { item = 106, texture = 20 } or { item = 58, texture = 2 }
 	end
 
 	UniformPassportBySource[source] = Passport
-	TriggerClientEvent("skinshop:Apply",source,Preset[Number][Model],false)
+	TriggerClientEvent("skinshop:Apply",source,Uniform,false)
 end)
 
 AddEventHandler("player:ServiceLeave",function(_,Passport,Permission)
