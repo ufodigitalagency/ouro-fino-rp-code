@@ -7,6 +7,8 @@ Config.PublicNpc = {
 	Coords = vec4(-541.55,-1681.05,19.31,17.01),
 	Scenario = "WORLD_HUMAN_GUARD_STAND",
 	SpawnTimeout = 10000,
+	SpawnDistance = 75.0,
+	SpawnCheckInterval = 2000,
 	TargetRadius = 0.90,
 	TargetDistance = 2.0
 }

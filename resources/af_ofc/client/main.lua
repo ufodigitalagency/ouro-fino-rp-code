@@ -3,6 +3,7 @@ local OrganizerZone = "AF_OFC:Organizer"
 
 local Npc = nil
 local SetupComplete = false
+local NpcSpawnInProgress = false
 local UiOpen = false
 local UiMode = nil
 local SessionToken = nil
@@ -81,24 +82,50 @@ local function loadModel(ModelName)
 end
 
 local function createNpc()
-	removeNpc()
+	if Npc and DoesEntityExist(Npc) then
+		return true
+	end
+
+	if NpcSpawnInProgress then
+		return false
+	end
+
+	NpcSpawnInProgress = true
+	Npc = nil
 
 	local Model = loadModel(Config.PublicNpc.Model)
 	if not Model then
+		NpcSpawnInProgress = false
 		print(Config.Texts.Console.NpcModelUnavailable:format(Config.PublicNpc.Model))
 		return false
 	end
 
 	local Coords = Config.PublicNpc.Coords
+	RequestCollisionAtCoord(Coords.x,Coords.y,Coords.z)
 	Npc = CreatePed(4,Model,Coords.x,Coords.y,Coords.z,Coords.w,false,false)
 	SetModelAsNoLongerNeeded(Model)
 
 	if not Npc or Npc == 0 or not DoesEntityExist(Npc) then
 		Npc = nil
+		NpcSpawnInProgress = false
 		return false
 	end
 
 	SetEntityAsMissionEntity(Npc,true,true)
+	SetEntityLoadCollisionFlag(Npc,true)
+	FreezeEntityPosition(Npc,true)
+
+	local CollisionTimeout = GetGameTimer() + Config.PublicNpc.SpawnTimeout
+	while not HasCollisionLoadedAroundEntity(Npc) and GetGameTimer() < CollisionTimeout do
+		RequestCollisionAtCoord(Coords.x,Coords.y,Coords.z)
+		Wait(100)
+	end
+
+	SetEntityCoordsNoOffset(Npc,Coords.x,Coords.y,Coords.z,false,false,false)
+	SetEntityHeading(Npc,Coords.w)
+	SetEntityCollision(Npc,true,true)
+	SetEntityVisible(Npc,true,false)
+	ResetEntityAlpha(Npc)
 	SetEntityInvincible(Npc,true)
 	SetEntityCanBeDamaged(Npc,false)
 	SetBlockingOfNonTemporaryEvents(Npc,true)
@@ -106,42 +133,41 @@ local function createNpc()
 	SetPedCanRagdoll(Npc,false)
 	SetPedDiesWhenInjured(Npc,false)
 	SetPedFleeAttributes(Npc,0,false)
-	FreezeEntityPosition(Npc,true)
 
 	if Config.PublicNpc.Scenario and Config.PublicNpc.Scenario ~= "" then
 		TaskStartScenarioInPlace(Npc,Config.PublicNpc.Scenario,0,true)
 	end
+	SetPedKeepTask(Npc,true)
 
+	NpcSpawnInProgress = false
 	return true
 end
 
-local function registerTargets(NpcReady)
+local function registerTargets()
 	removeTargets()
 
-	if NpcReady then
-		exports.target:AddCircleZone(PublicZone,Config.PublicNpc.Coords.xyz,Config.PublicNpc.TargetRadius,{
-			name = PublicZone,
-			heading = Config.PublicNpc.Coords.w,
-			useZ = false
-		},{
-			Distance = Config.PublicNpc.TargetDistance,
-			options = {
-				{
-					event = "af_ofc:targetViewEvent",
-					label = Config.Texts.Target.ViewEvent,
-					tunnel = "client"
-				},{
-					event = "af_ofc:targetOpenBetting",
-					label = Config.Texts.Target.OpenBetting,
-					tunnel = "client"
-				},{
-					event = "af_ofc:targetCheckIn",
-					label = Config.Texts.Target.CheckIn,
-					tunnel = "client"
-				}
+	exports.target:AddCircleZone(PublicZone,Config.PublicNpc.Coords.xyz,Config.PublicNpc.TargetRadius,{
+		name = PublicZone,
+		heading = Config.PublicNpc.Coords.w,
+		useZ = false
+	},{
+		Distance = Config.PublicNpc.TargetDistance,
+		options = {
+			{
+				event = "af_ofc:targetViewEvent",
+				label = Config.Texts.Target.ViewEvent,
+				tunnel = "client"
+			},{
+				event = "af_ofc:targetOpenBetting",
+				label = Config.Texts.Target.OpenBetting,
+				tunnel = "client"
+			},{
+				event = "af_ofc:targetCheckIn",
+				label = Config.Texts.Target.CheckIn,
+				tunnel = "client"
 			}
-		})
-	end
+		}
+	})
 
 	if Config.OrganizerDesk.Enabled then
 		exports.target:AddCircleZone(OrganizerZone,Config.OrganizerDesk.Coords.xyz,Config.OrganizerDesk.TargetRadius,{
@@ -167,12 +193,7 @@ local function setup()
 	end
 
 	SetupComplete = true
-	local NpcReady = createNpc()
-	registerTargets(NpcReady)
-
-	if not NpcReady then
-		notify(Config.Texts.Notifications.NpcUnavailable,"vermelho")
-	end
+	registerTargets()
 end
 
 local function startPublicMonitor()
@@ -312,4 +333,16 @@ end)
 CreateThread(function()
 	Wait(500)
 	setup()
+
+	while SetupComplete do
+		local Ped = PlayerPedId()
+		local NearNpc = LocalPlayer.state.Active and DoesEntityExist(Ped) and
+			#(GetEntityCoords(Ped) - Config.PublicNpc.Coords.xyz) <= Config.PublicNpc.SpawnDistance
+
+		if NearNpc and (not Npc or not DoesEntityExist(Npc)) then
+			createNpc()
+		end
+
+		Wait(Config.PublicNpc.SpawnCheckInterval)
+	end
 end)
