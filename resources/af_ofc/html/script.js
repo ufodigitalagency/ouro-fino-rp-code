@@ -62,9 +62,17 @@
 		state.toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 4200);
 	};
 
+	const setDocumentVisibility = (visible) => {
+		document.body.classList.toggle("ui-open", visible);
+		document.body.classList.toggle("ui-closed", !visible);
+		document.body.setAttribute("aria-hidden", visible ? "false" : "true");
+	};
+
 	const close = () => {
+		setDocumentVisibility(false);
 		state.open = false;
 		state.mode = null;
+		state.snapshot = null;
 		state.pending.clear();
 		byId("app")?.classList.remove("is-open");
 		byId("app")?.setAttribute("aria-hidden", "true");
@@ -73,6 +81,11 @@
 		byId("toast")?.classList.remove("is-visible");
 		setBetProcessing(false);
 		organizerButtons.forEach((button) => button.classList.remove("is-processing"));
+	};
+
+	const requestClose = () => {
+		close();
+		void post("close");
 	};
 
 	const setBetProcessing = (processing) => {
@@ -194,19 +207,32 @@
 	const open = (payload) => {
 		const snapshot = payload?.Snapshot;
 		const revision = Number(snapshot?.Revision);
-		if (!snapshot || !Number.isInteger(revision) || revision < state.snapshotRevision) return;
+		const mode = snapshot?.Mode;
+		if (!snapshot || !Number.isInteger(revision) || (mode !== "public" && mode !== "organizer")) {
+			requestClose();
+			return;
+		}
+
+		if (revision < state.snapshotRevision) return;
+
+		try {
+			applyCommonTexts(snapshot.Texts || {});
+
+			if (mode === "organizer") renderOrganizer(snapshot);
+			else renderPublic(snapshot, payload.View);
+		} catch (_) {
+			requestClose();
+			return;
+		}
 
 		state.snapshotRevision = revision;
 		state.snapshot = snapshot;
 		state.open = true;
-		state.mode = snapshot.Mode;
-		applyCommonTexts(snapshot.Texts || {});
-
-		if (snapshot.Mode === "organizer") renderOrganizer(snapshot);
-		else renderPublic(snapshot, payload.View);
+		state.mode = mode;
 
 		byId("app")?.classList.add("is-open");
 		byId("app")?.setAttribute("aria-hidden", "false");
+		setDocumentVisibility(true);
 	};
 
 	fighters.forEach((fighter) => {
@@ -256,11 +282,14 @@
 		});
 	});
 
-	byId("close-button")?.addEventListener("click", () => post("close"));
+	byId("close-button")?.addEventListener("click", requestClose);
 
 	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && state.open) post("close");
+		if (event.key === "Escape" && state.open) requestClose();
 	});
+
+	window.addEventListener("error", requestClose);
+	window.addEventListener("unhandledrejection", requestClose);
 
 	window.addEventListener("message", (event) => {
 		const data = event.data;
