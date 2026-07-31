@@ -1,0 +1,315 @@
+local PublicZone = "AF_OFC:Public"
+local OrganizerZone = "AF_OFC:Organizer"
+
+local Npc = nil
+local SetupComplete = false
+local UiOpen = false
+local UiMode = nil
+local SessionToken = nil
+local RequestSequence = 0
+local PendingOpenRequest = 0
+
+local function nextRequestId()
+	RequestSequence = RequestSequence + 1
+	if RequestSequence > 2147483647 then
+		RequestSequence = 1
+	end
+
+	return RequestSequence
+end
+
+local function notify(Message,Color)
+	TriggerEvent("Notify",Config.Texts.Notifications.Title,Message,Color or "amarelo",5000)
+end
+
+local function closeUi(NotifyServer)
+	local Token = SessionToken
+
+	UiOpen = false
+	UiMode = nil
+	SessionToken = nil
+
+	SendNUIMessage({ Action = "close" })
+	SetNuiFocus(false,false)
+	SetNuiFocusKeepInput(false)
+
+	if NotifyServer and Token then
+		TriggerServerEvent("af_ofc:closeSession",{ SessionToken = Token })
+	end
+end
+
+local function removeTargets()
+	pcall(function()
+		exports.target:RemCircleZone(PublicZone)
+	end)
+
+	pcall(function()
+		exports.target:RemCircleZone(OrganizerZone)
+	end)
+end
+
+local function removeNpc()
+	if Npc and DoesEntityExist(Npc) then
+		FreezeEntityPosition(Npc,false)
+		SetEntityAsMissionEntity(Npc,true,true)
+		DeletePed(Npc)
+	end
+
+	Npc = nil
+end
+
+local function cleanup()
+	removeTargets()
+	removeNpc()
+	closeUi(false)
+	SetupComplete = false
+end
+
+local function loadModel(ModelName)
+	local Model = GetHashKey(ModelName)
+	if not IsModelInCdimage(Model) or not IsModelValid(Model) then
+		return nil
+	end
+
+	RequestModel(Model)
+	local Timeout = GetGameTimer() + Config.PublicNpc.SpawnTimeout
+	while not HasModelLoaded(Model) and GetGameTimer() < Timeout do
+		Wait(100)
+	end
+
+	return HasModelLoaded(Model) and Model or nil
+end
+
+local function createNpc()
+	removeNpc()
+
+	local Model = loadModel(Config.PublicNpc.Model)
+	if not Model then
+		print(Config.Texts.Console.NpcModelUnavailable:format(Config.PublicNpc.Model))
+		return false
+	end
+
+	local Coords = Config.PublicNpc.Coords
+	Npc = CreatePed(4,Model,Coords.x,Coords.y,Coords.z,Coords.w,false,false)
+	SetModelAsNoLongerNeeded(Model)
+
+	if not Npc or Npc == 0 or not DoesEntityExist(Npc) then
+		Npc = nil
+		return false
+	end
+
+	SetEntityAsMissionEntity(Npc,true,true)
+	SetEntityInvincible(Npc,true)
+	SetEntityCanBeDamaged(Npc,false)
+	SetBlockingOfNonTemporaryEvents(Npc,true)
+	TaskSetBlockingOfNonTemporaryEvents(Npc,true)
+	SetPedCanRagdoll(Npc,false)
+	SetPedDiesWhenInjured(Npc,false)
+	SetPedFleeAttributes(Npc,0,false)
+	FreezeEntityPosition(Npc,true)
+
+	if Config.PublicNpc.Scenario and Config.PublicNpc.Scenario ~= "" then
+		TaskStartScenarioInPlace(Npc,Config.PublicNpc.Scenario,0,true)
+	end
+
+	return true
+end
+
+local function registerTargets(NpcReady)
+	removeTargets()
+
+	if NpcReady then
+		exports.target:AddCircleZone(PublicZone,Config.PublicNpc.Coords.xyz,Config.PublicNpc.TargetRadius,{
+			name = PublicZone,
+			heading = Config.PublicNpc.Coords.w,
+			useZ = false
+		},{
+			Distance = Config.PublicNpc.TargetDistance,
+			options = {
+				{
+					event = "af_ofc:targetViewEvent",
+					label = Config.Texts.Target.ViewEvent,
+					tunnel = "client"
+				},{
+					event = "af_ofc:targetOpenBetting",
+					label = Config.Texts.Target.OpenBetting,
+					tunnel = "client"
+				},{
+					event = "af_ofc:targetCheckIn",
+					label = Config.Texts.Target.CheckIn,
+					tunnel = "client"
+				}
+			}
+		})
+	end
+
+	if Config.OrganizerDesk.Enabled then
+		exports.target:AddCircleZone(OrganizerZone,Config.OrganizerDesk.Coords.xyz,Config.OrganizerDesk.TargetRadius,{
+			name = OrganizerZone,
+			heading = Config.OrganizerDesk.Coords.w,
+			useZ = false
+		},{
+			Distance = Config.OrganizerDesk.TargetDistance,
+			options = {
+				{
+					event = "af_ofc:targetOrganizerPanel",
+					label = Config.Texts.Target.OrganizerPanel,
+					tunnel = "client"
+				}
+			}
+		})
+	end
+end
+
+local function setup()
+	if SetupComplete then
+		return
+	end
+
+	SetupComplete = true
+	local NpcReady = createNpc()
+	registerTargets(NpcReady)
+
+	if not NpcReady then
+		notify(Config.Texts.Notifications.NpcUnavailable,"vermelho")
+	end
+end
+
+local function startPublicMonitor()
+	CreateThread(function()
+		while UiOpen and UiMode == "public" do
+			Wait(Config.Interaction.ClientValidationInterval)
+
+			local Ped = PlayerPedId()
+			local Invalid = not LocalPlayer.state.Active or not DoesEntityExist(Ped) or GetEntityHealth(Ped) <= 100
+			if not Invalid then
+				Invalid = #(GetEntityCoords(Ped) - Config.PublicNpc.Coords.xyz) > Config.Interaction.ClientCloseDistance
+			end
+
+			if Invalid then
+				closeUi(true)
+				notify(Config.Texts.Notifications.InvalidSession,"vermelho")
+				break
+			end
+		end
+	end)
+end
+
+RegisterNetEvent("af_ofc:targetViewEvent",function()
+	PendingOpenRequest = nextRequestId()
+	TriggerServerEvent("af_ofc:requestEvent",PendingOpenRequest)
+end)
+
+RegisterNetEvent("af_ofc:targetOpenBetting",function()
+	PendingOpenRequest = nextRequestId()
+	TriggerServerEvent("af_ofc:requestBettingPanel",PendingOpenRequest)
+end)
+
+RegisterNetEvent("af_ofc:targetCheckIn",function()
+	TriggerServerEvent("af_ofc:requestCheckIn",nextRequestId())
+end)
+
+RegisterNetEvent("af_ofc:targetOrganizerPanel",function()
+	PendingOpenRequest = nextRequestId()
+	TriggerServerEvent("af_ofc:requestOrganizerDesk",PendingOpenRequest)
+end)
+
+RegisterNetEvent("af_ofc:openAuthorized",function(Data)
+	if type(Data) ~= "table" or type(Data.Snapshot) ~= "table" then
+		return
+	end
+
+	local RequestId = tonumber(Data.RequestId)
+	local CommandOrigin = Data.Origin == "command"
+	if not RequestId or type(Data.SessionToken) ~= "string" or (not CommandOrigin and RequestId ~= PendingOpenRequest) then
+		return
+	end
+
+	PendingOpenRequest = 0
+	UiOpen = true
+	UiMode = Data.Snapshot.Mode
+	SessionToken = Data.SessionToken
+
+	SendNUIMessage({
+		Action = "open",
+		Payload = {
+			RequestId = RequestId,
+			View = Data.View,
+			Snapshot = Data.Snapshot
+		}
+	})
+	SetNuiFocus(true,true)
+	SetNuiFocusKeepInput(false)
+
+	if UiMode == "public" then
+		startPublicMonitor()
+	end
+end)
+
+RegisterNetEvent("af_ofc:actionResult",function(Data)
+	if type(Data) ~= "table" then
+		return
+	end
+
+	if Data.Kind == "checkIn" then
+		notify(Data.Message or Config.Texts.Notifications.InvalidRequest,Data.Success and "verde" or "amarelo")
+		return
+	end
+
+	if not UiOpen then
+		return
+	end
+
+	SendNUIMessage({ Action = "actionResult", Payload = Data })
+end)
+
+RegisterNetEvent("af_ofc:forceClose",function()
+	closeUi(false)
+end)
+
+RegisterNUICallback("close",function(_,Callback)
+	closeUi(true)
+	Callback({ Accepted = true })
+end)
+
+RegisterNUICallback("attemptBet",function(Data,Callback)
+	if not UiOpen or UiMode ~= "public" or not SessionToken or type(Data) ~= "table" then
+		Callback({ Accepted = false })
+		return
+	end
+
+	local RequestId = tonumber(Data.RequestId) or nextRequestId()
+	TriggerServerEvent("af_ofc:attemptBet",{
+		RequestId = RequestId,
+		SessionToken = SessionToken,
+		Side = Data.Side,
+		Amount = Data.Amount
+	})
+	Callback({ Accepted = true })
+end)
+
+RegisterNUICallback("organizerPreview",function(Data,Callback)
+	if not UiOpen or UiMode ~= "organizer" or not SessionToken or type(Data) ~= "table" or Config.OrganizerPreviewActions[Data.Action] ~= true then
+		Callback({ Accepted = false })
+		return
+	end
+
+	local RequestId = tonumber(Data.RequestId) or nextRequestId()
+	TriggerServerEvent("af_ofc:organizerPreview",{
+		RequestId = RequestId,
+		SessionToken = SessionToken,
+		Action = Data.Action
+	})
+	Callback({ Accepted = true })
+end)
+
+AddEventHandler("onResourceStop",function(Resource)
+	if Resource == GetCurrentResourceName() then
+		cleanup()
+	end
+end)
+
+CreateThread(function()
+	Wait(500)
+	setup()
+end)

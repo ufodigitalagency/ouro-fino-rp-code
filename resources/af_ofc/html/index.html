@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+	<title></title>
+	<link rel="stylesheet" href="style.css">
+	<script defer src="script.js"></script>
+</head>
+<body>
+	<main id="app" class="app" aria-hidden="true">
+		<section class="ofc-shell" role="dialog" aria-modal="true">
+			<div class="ambient ambient-red" aria-hidden="true"></div>
+			<div class="ambient ambient-gold" aria-hidden="true"></div>
+			<div class="noise" aria-hidden="true"></div>
+
+			<header class="topbar">
+				<div class="brand-lockup">
+					<div class="brand-mark" aria-hidden="true">
+						<span id="brand-short"></span>
+					</div>
+					<div class="brand-copy">
+						<span id="brand-kicker" class="eyebrow"></span>
+						<strong id="brand-name"></strong>
+					</div>
+				</div>
+
+				<div class="topbar-status">
+					<span class="signal-dot" aria-hidden="true"></span>
+					<span id="live-signal"></span>
+				</div>
+
+				<button id="close-button" class="close-button" type="button" aria-label="">
+					<span aria-hidden="true"></span>
+				</button>
+			</header>
+
+			<section id="public-view" class="view public-view" hidden>
+				<div class="event-heading">
+					<div class="event-copy">
+						<div class="status-line">
+							<span id="event-status" class="status-badge"></span>
+							<span id="event-schedule" class="schedule"></span>
+						</div>
+						<h1 id="event-name"></h1>
+						<span id="demo-label" class="demo-label"></span>
+					</div>
+					<div class="event-code" aria-hidden="true">
+						<span></span><span></span><span></span>
+					</div>
+				</div>
+
+				<div class="fight-card">
+					<button class="fighter fighter-a" type="button" data-side="A">
+						<span id="fighter-a-corner" class="fighter-corner"></span>
+						<strong id="fighter-a-name" class="fighter-name"></strong>
+						<span class="fighter-line" aria-hidden="true"></span>
+						<div class="fighter-data">
+							<div><small id="pool-a-label"></small><b id="fighter-a-pool"></b></div>
+							<div><small id="odds-a-label"></small><b id="fighter-a-odds"></b></div>
+						</div>
+					</button>
+
+					<div class="versus-block" aria-hidden="true">
+						<span class="versus-ring"></span>
+						<strong id="versus"></strong>
+						<i></i>
+					</div>
+
+					<button class="fighter fighter-b" type="button" data-side="B">
+						<span id="fighter-b-corner" class="fighter-corner"></span>
+						<strong id="fighter-b-name" class="fighter-name"></strong>
+						<span class="fighter-line" aria-hidden="true"></span>
+						<div class="fighter-data">
+							<div><small id="pool-b-label"></small><b id="fighter-b-pool"></b></div>
+							<div><small id="odds-b-label"></small><b id="fighter-b-odds"></b></div>
+						</div>
+					</button>
+				</div>
+
+				<section id="betting-block" class="betting-block">
+					<div class="betting-title">
+						<div>
+							<span id="choose-fighter" class="eyebrow"></span>
+							<strong id="selected-fighter"></strong>
+						</div>
+						<span id="public-tab" class="section-index"></span>
+					</div>
+
+					<div class="betting-form">
+						<label class="amount-field">
+							<span id="bet-value-label"></span>
+							<div><i id="currency"></i><input id="bet-amount" type="number" min="1" step="1" inputmode="numeric" autocomplete="off"></div>
+						</label>
+						<button id="bet-button" class="primary-action" type="button">
+							<span></span>
+							<i aria-hidden="true"></i>
+						</button>
+					</div>
+
+					<div class="finance-warning">
+						<span id="warning-symbol" class="warning-icon" aria-hidden="true"></span>
+						<p id="financial-warning"></p>
+					</div>
+				</section>
+			</section>
+
+			<section id="organizer-view" class="view organizer-view" hidden>
+				<div class="organizer-heading">
+					<div>
+						<span id="organizer-kicker" class="eyebrow"></span>
+						<h1 id="organizer-title"></h1>
+						<p id="organizer-description"></p>
+					</div>
+					<span id="organizer-tab" class="section-index"></span>
+				</div>
+
+				<div class="organizer-grid">
+					<article class="operations-card event-overview">
+						<div class="card-heading"><span id="event-status-label"></span><b id="organizer-event-status"></b></div>
+						<h2 id="organizer-event-name"></h2>
+						<div class="versus-compact">
+							<strong id="organizer-fighter-a"></strong>
+							<span id="organizer-versus"></span>
+							<strong id="organizer-fighter-b"></strong>
+						</div>
+					</article>
+
+					<article class="operations-card checkin-card">
+						<div class="card-heading"><span id="checkin-status-label"></span><b id="checkin-slots"></b></div>
+						<div class="checkin-row"><span id="checkin-a-label"></span><strong id="checkin-a-value"></strong></div>
+						<div class="checkin-row"><span id="checkin-b-label"></span><strong id="checkin-b-value"></strong></div>
+					</article>
+
+					<article class="operations-card system-card">
+						<div class="card-heading"><span id="system-status-label"></span><b id="system-indicators"></b></div>
+						<div class="metric-row"><span id="backend-label"></span><strong id="backend-value" class="ok"></strong></div>
+						<div class="metric-row"><span id="finance-label"></span><strong id="finance-value"></strong></div>
+						<div class="metric-row"><span id="database-label"></span><strong id="database-value"></strong></div>
+						<div class="metric-row"><span id="phase-label"></span><strong id="phase-value" class="gold"></strong></div>
+					</article>
+
+					<article class="operations-card actions-card">
+						<div class="card-heading"><span id="future-actions-label"></span><b id="locked-label"></b></div>
+						<div class="action-grid">
+							<button type="button" data-organizer-action="create"><span id="action-create"></span><i></i></button>
+							<button type="button" data-organizer-action="announce"><span id="action-announce"></span><i></i></button>
+							<button type="button" data-organizer-action="openBets"><span id="action-open-bets"></span><i></i></button>
+							<button type="button" data-organizer-action="startFight"><span id="action-start-fight"></span><i></i></button>
+							<button type="button" data-organizer-action="cancelEvent"><span id="action-cancel-event"></span><i></i></button>
+						</div>
+					</article>
+				</div>
+			</section>
+
+			<div id="toast" class="toast" role="status" aria-live="polite">
+				<span aria-hidden="true"></span>
+				<p></p>
+			</div>
+		</section>
+	</main>
+</body>
+</html>
