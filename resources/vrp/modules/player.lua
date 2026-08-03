@@ -4,6 +4,22 @@
 local Spawns = {}
 local Objects = {}
 local Weapons = {}
+local BroomObjects = {}
+local BroomModel = GetHashKey("prop_tool_broom")
+
+local function DeletePlayerBroom(Passport)
+	local Network = BroomObjects[Passport]
+	if not Network then
+		return false
+	end
+
+	BroomObjects[Passport] = nil
+	if Objects[Passport] then
+		Objects[Passport][Network] = nil
+	end
+	TriggerEvent("DeleteObjectServer",Network)
+	return true
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- CHARACTERCHOSEN
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -95,6 +111,10 @@ AddEventHandler("DeleteObject",function(Index,Weapon)
 			Objects[Passport][Index] = nil
 		end
 
+		if BroomObjects[Passport] == Index then
+			BroomObjects[Passport] = nil
+		end
+
 		if Weapon and Weapons[Passport] and Weapons[Passport][Weapon] then
 			Index = Weapons[Passport][Weapon]
 			Weapons[Passport][Weapon] = nil
@@ -139,6 +159,8 @@ AddEventHandler("DebugObjects",function(Passport)
 
 		Objects[Passport] = nil
 	end
+
+	BroomObjects[Passport] = nil
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- DEBUGWEAPONS
@@ -433,6 +455,11 @@ function tvRP.CreateObject(Model,x,y,z,Weapon,Component)
 	local Passport = vRP.Passport(source)
 	if Passport and Model then
 		local Hash = GetHashKey(Model)
+		local IsBroom = Hash == BroomModel
+		if IsBroom then
+			DeletePlayerBroom(Passport)
+		end
+
 		local Object = CreateObject(Component or Hash,x,y,z - 2.0,true,true,false)
 
 		local CurrentTime = os.time()
@@ -442,6 +469,12 @@ function tvRP.CreateObject(Model,x,y,z,Weapon,Component)
 
 		if DoesEntityExist(Object) then
 			SetEntityIgnoreRequestControlFilter(Object,true)
+			if IsBroom then
+				SetEntityRoutingBucket(Object,GetPlayerRoutingBucket(source))
+				if SetEntityOrphanMode then
+					SetEntityOrphanMode(Object,2)
+				end
+			end
 
 			local NetObjects = NetworkGetNetworkIdFromEntity(Object)
 
@@ -453,12 +486,42 @@ function tvRP.CreateObject(Model,x,y,z,Weapon,Component)
 				Objects[Passport][NetObjects] = true
 			end
 
+			if IsBroom then
+				BroomObjects[Passport] = NetObjects
+				local State = Entity(Object).state
+				State:set("af:emoteBroom",true,true)
+				State:set("af:emoteBroomOwner",source,true)
+			end
+
 			return NetObjects
 		end
 	end
 
 	return false
 end
+
+CreateThread(function()
+	while true do
+		Wait(next(BroomObjects) and 1000 or 3000)
+		for Passport,Network in pairs(BroomObjects) do
+			local source = vRP.Source(Passport)
+			local Object = NetworkGetEntityFromNetworkId(Network)
+			if not source or GetPlayerPed(source) == 0 or vRP.GetHealth(source) <= 100 or not DoesEntityExist(Object) then
+				DeletePlayerBroom(Passport)
+			end
+		end
+	end
+end)
+
+AddEventHandler("onResourceStop",function(Resource)
+	if Resource ~= GetCurrentResourceName() then
+		return
+	end
+
+	for Passport in pairs(BroomObjects) do
+		DeletePlayerBroom(Passport)
+	end
+end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- BUCKET
 -----------------------------------------------------------------------------------------------------------------------------------------

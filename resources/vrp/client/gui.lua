@@ -11,6 +11,8 @@ local PersistentList = {}
 local Button = GetNetworkTime()
 local ToggleCooldown = 250
 local AnimVars = { nil,nil,false,49 }
+local BroomModel = GetHashKey("prop_tool_broom")
+local ObservedBrooms = {}
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- THREADBLOCK
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -177,6 +179,18 @@ function tvRP.CreateObjects(Dict,Anim,Prop,Flag,Hands,Height,Pos1,Pos2,Pos3,Pos4
 		return false
 	end
 
+	local PropHash = GetHashKey(Prop)
+	if PropHash == BroomModel then
+		RequestModel(PropHash)
+		local ModelTimeout = GetGameTimer() + 5000
+		while not HasModelLoaded(PropHash) and GetGameTimer() < ModelTimeout do
+			Wait(25)
+		end
+		if not HasModelLoaded(PropHash) then
+			return false
+		end
+	end
+
 	local Coords = GetEntityCoords(Ped)
 	local Networked = vRPS.CreateObject(Prop,Coords.x,Coords.y,Coords.z)
 	if not Networked then return end
@@ -192,6 +206,16 @@ function tvRP.CreateObjects(Dict,Anim,Prop,Flag,Hands,Height,Pos1,Pos2,Pos3,Pos4
 	end
 
 	Object = Entity
+	if PropHash == BroomModel then
+		local ControlTimeout = GetGameTimer() + 1500
+		while not NetworkHasControlOfEntity(Object) and GetGameTimer() < ControlTimeout do
+			NetworkRequestControlOfEntity(Object)
+			Wait(25)
+		end
+		SetEntityAsMissionEntity(Object,true,false)
+		SetNetworkIdCanMigrate(Networked,true)
+		SetNetworkIdExistsOnAllMachines(Networked,true)
+	end
 
 	SetEntityCollision(Object,false,true)
 	SetEntityCompletelyDisableCollision(Object,true,true)
@@ -202,7 +226,82 @@ function tvRP.CreateObjects(Dict,Anim,Prop,Flag,Hands,Height,Pos1,Pos2,Pos3,Pos4
 	else
 		AttachEntityToEntity(Object,Ped,GetPedBoneIndex(Ped,Hands),0.0,0.0,0.0,0.0,0.0,0.0,true,true,false,false,2,true)
 	end
+
+	if PropHash == BroomModel then
+		ObservedBrooms[Object] = true
+		SetModelAsNoLongerNeeded(PropHash)
+	end
 end
+
+local function ReconcileBroom(Object)
+	if not Object or Object == 0 or not DoesEntityExist(Object) or GetEntityModel(Object) ~= BroomModel then
+		ObservedBrooms[Object] = nil
+		return false
+	end
+
+	local State = Entity(Object).state
+	if State["af:emoteBroom"] ~= true then
+		ObservedBrooms[Object] = nil
+		return false
+	end
+
+	local OwnerSource = tonumber(State["af:emoteBroomOwner"])
+	local OwnerPlayer = OwnerSource and GetPlayerFromServerId(OwnerSource) or -1
+	if OwnerPlayer == -1 then
+		ObservedBrooms[Object] = true
+		return false
+	end
+
+	local OwnerPed = GetPlayerPed(OwnerPlayer)
+	if OwnerPed == 0 or not DoesEntityExist(OwnerPed) then
+		ObservedBrooms[Object] = true
+		return false
+	end
+
+	SetEntityVisible(Object,true,false)
+	SetEntityCollision(Object,false,true)
+	SetEntityCompletelyDisableCollision(Object,true,true)
+	SetEntityNoCollisionEntity(Object,OwnerPed,true)
+	if GetEntityAttachedTo(Object) ~= OwnerPed then
+		AttachEntityToEntity(Object,OwnerPed,GetPedBoneIndex(OwnerPed,28422),0.0,0.0,0.0,0.0,0.0,0.0,true,true,false,false,2,true)
+	end
+	ObservedBrooms[Object] = true
+	return true
+end
+
+if AddStateBagChangeHandler and GetEntityFromStateBagName then
+	AddStateBagChangeHandler("af:emoteBroomOwner",nil,function(BagName)
+		CreateThread(function()
+			local Timeout = GetGameTimer() + 5000
+			repeat
+				Wait(50)
+				local Entity = GetEntityFromStateBagName(BagName)
+				if Entity and Entity ~= 0 and ReconcileBroom(Entity) then
+					return
+				end
+			until GetGameTimer() >= Timeout
+		end)
+	end)
+end
+
+CreateThread(function()
+	while true do
+		for _,ObjectEntity in ipairs(GetGamePool("CObject")) do
+			if DoesEntityExist(ObjectEntity) and Entity(ObjectEntity).state["af:emoteBroom"] == true then
+				ReconcileBroom(ObjectEntity)
+			end
+		end
+
+		for ObjectEntity in pairs(ObservedBrooms) do
+			if not DoesEntityExist(ObjectEntity) then
+				ObservedBrooms[ObjectEntity] = nil
+			else
+				ReconcileBroom(ObjectEntity)
+			end
+		end
+		Wait(next(ObservedBrooms) and 500 or 2000)
+	end
+end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- DESTROY
 -----------------------------------------------------------------------------------------------------------------------------------------
