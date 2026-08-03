@@ -144,15 +144,42 @@
 					<article class="operations-card actions-card">
 						<div class="card-heading"><span id="future-actions-label"></span><b id="locked-label"></b></div>
 						<div class="action-grid">
-							<button type="button" data-organizer-action="create"><span id="action-create"></span><i></i></button>
-							<button type="button" data-organizer-action="announce"><span id="action-announce"></span><i></i></button>
+							<button type="button" data-organizer-action="createEvent"><span id="action-create"></span><i></i></button>
+							<button type="button" data-organizer-action="announceEvent"><span id="action-announce"></span><i></i></button>
 							<button type="button" data-organizer-action="openBets"><span id="action-open-bets"></span><i></i></button>
+							<button type="button" data-organizer-action="closeBets"><span id="action-close-bets"></span><i></i></button>
 							<button type="button" data-organizer-action="startFight"><span id="action-start-fight"></span><i></i></button>
 							<button type="button" data-organizer-action="cancelEvent"><span id="action-cancel-event"></span><i></i></button>
 						</div>
 					</article>
 				</div>
 			</section>
+
+			<div id="create-event-modal" class="modal-layer" hidden>
+				<form id="create-event-form" class="modal-card" autocomplete="off">
+					<h2 id="create-event-title"></h2>
+					<label><span id="event-title-label"></span><input id="event-title-input" type="text" minlength="3" maxlength="48" required></label>
+					<div class="modal-fields">
+						<label><span id="fighter-a-passport-label"></span><input id="fighter-a-passport" type="number" min="1" step="1" required></label>
+						<label><span id="fighter-b-passport-label"></span><input id="fighter-b-passport" type="number" min="1" step="1" required></label>
+					</div>
+					<div class="modal-actions">
+						<button id="cancel-create-event" type="button" class="secondary-action"></button>
+						<button id="confirm-create-event" type="submit" class="primary-action"></button>
+					</div>
+				</form>
+			</div>
+
+			<div id="cancel-event-modal" class="modal-layer" hidden>
+				<section class="modal-card compact" role="alertdialog" aria-modal="true">
+					<h2 id="cancel-confirmation-title"></h2>
+					<p id="cancel-confirmation-text"></p>
+					<div class="modal-actions">
+						<button id="keep-event" type="button" class="secondary-action"></button>
+						<button id="confirm-cancel-event" type="button" class="danger-action"></button>
+					</div>
+				</section>
+			</div>
 
 			<div id="toast" class="toast" role="status" aria-live="polite">
 				<span aria-hidden="true"></span>

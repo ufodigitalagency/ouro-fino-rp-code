@@ -5,6 +5,7 @@
 	const byId = (id) => document.getElementById(id);
 	const fighters = Array.from(document.querySelectorAll("[data-side]"));
 	const organizerButtons = Array.from(document.querySelectorAll("[data-organizer-action]"));
+	const organizerRoutes = new Set(["announceEvent", "openBets", "closeBets", "startFight"]);
 
 	const state = {
 		open: false,
@@ -68,24 +69,14 @@
 		document.body.setAttribute("aria-hidden", visible ? "false" : "true");
 	};
 
-	const close = () => {
-		setDocumentVisibility(false);
-		state.open = false;
-		state.mode = null;
-		state.snapshot = null;
-		state.pending.clear();
-		byId("app")?.classList.remove("is-open");
-		byId("app")?.setAttribute("aria-hidden", "true");
-		byId("public-view").hidden = true;
-		byId("organizer-view").hidden = true;
-		byId("toast")?.classList.remove("is-visible");
-		setBetProcessing(false);
-		organizerButtons.forEach((button) => button.classList.remove("is-processing"));
+	const setModal = (id, visible) => {
+		const modal = byId(id);
+		if (modal) modal.hidden = !visible;
 	};
 
-	const requestClose = () => {
-		close();
-		void post("close");
+	const closeModals = () => {
+		setModal("create-event-modal", false);
+		setModal("cancel-event-modal", false);
 	};
 
 	const setBetProcessing = (processing) => {
@@ -96,6 +87,28 @@
 		button.querySelector("span").textContent = processing
 			? safeString(state.texts.BetProcessing)
 			: safeString(state.texts.BetButton);
+	};
+
+	const close = () => {
+		setDocumentVisibility(false);
+		state.open = false;
+		state.mode = null;
+		state.snapshot = null;
+		state.selectedSide = null;
+		state.pending.clear();
+		byId("app")?.classList.remove("is-open");
+		byId("app")?.setAttribute("aria-hidden", "true");
+		byId("public-view").hidden = true;
+		byId("organizer-view").hidden = true;
+		byId("toast")?.classList.remove("is-visible");
+		closeModals();
+		setBetProcessing(false);
+		organizerButtons.forEach((button) => button.classList.remove("is-processing"));
+	};
+
+	const requestClose = () => {
+		close();
+		void post("close");
 	};
 
 	const setSelection = (side, snapshot) => {
@@ -157,8 +170,20 @@
 
 		const betting = byId("betting-block");
 		betting?.classList.toggle("is-highlighted", view === "betting");
+		betting?.classList.toggle("is-open", snapshot.State === "betting_open");
 		byId("public-view").hidden = false;
 		byId("organizer-view").hidden = true;
+	};
+
+	const setOrganizerActions = (snapshot) => {
+		const allowed = snapshot.Actions || {};
+		organizerButtons.forEach((button) => {
+			const action = safeString(button.dataset.organizerAction);
+			const key = action.charAt(0).toUpperCase() + action.slice(1);
+			const disabled = action !== "startFight" && allowed[key] !== true;
+			button.disabled = disabled;
+			button.setAttribute("aria-disabled", disabled ? "true" : "false");
+		});
 	};
 
 	const renderOrganizer = (snapshot) => {
@@ -178,8 +203,8 @@
 		setText("organizer-fighter-b", fighterB.Name);
 		setText("checkin-status-label", texts.CheckInStatus);
 		setText("checkin-slots", texts.CheckInSlots);
-		setText("checkin-a-label", texts.FighterA);
-		setText("checkin-b-label", texts.FighterB);
+		setText("checkin-a-label", `${texts.FighterA}${fighterA.Passport ? ` #${fighterA.Passport}` : ""}`);
+		setText("checkin-b-label", `${texts.FighterB}${fighterB.Passport ? ` #${fighterB.Passport}` : ""}`);
 		setText("checkin-a-value", fighterA.CheckedIn ? texts.BackendValue : texts.Pending);
 		setText("checkin-b-value", fighterB.CheckedIn ? texts.BackendValue : texts.Pending);
 		setText("system-status-label", texts.SystemStatus);
@@ -197,66 +222,94 @@
 		setText("action-create", texts.CreateEvent);
 		setText("action-announce", texts.Announce);
 		setText("action-open-bets", texts.OpenBets);
+		setText("action-close-bets", texts.CloseBets);
 		setText("action-start-fight", texts.StartFight);
 		setText("action-cancel-event", texts.CancelEvent);
+		setText("create-event-title", texts.CreateEventTitle);
+		setText("event-title-label", texts.EventTitleLabel);
+		setText("fighter-a-passport-label", texts.FighterAPassport);
+		setText("fighter-b-passport-label", texts.FighterBPassport);
+		setText("confirm-create-event", texts.ConfirmCreate);
+		setText("cancel-create-event", texts.CancelForm);
+		setText("cancel-confirmation-title", texts.CancelConfirmationTitle);
+		setText("cancel-confirmation-text", texts.CancelConfirmationText);
+		setText("confirm-cancel-event", texts.ConfirmCancel);
+		setText("keep-event", texts.KeepEvent);
+		byId("event-title-input").placeholder = safeString(texts.EventTitlePlaceholder);
+		setOrganizerActions(snapshot);
 
 		byId("public-view").hidden = true;
 		byId("organizer-view").hidden = false;
 	};
 
-	const open = (payload) => {
-		const snapshot = payload?.Snapshot;
+	const renderSnapshot = (snapshot, view) => {
 		const revision = Number(snapshot?.Revision);
 		const mode = snapshot?.Mode;
-		if (!snapshot || !Number.isInteger(revision) || (mode !== "public" && mode !== "organizer")) {
-			requestClose();
-			return;
-		}
+		if (!snapshot || !Number.isInteger(revision) || (mode !== "public" && mode !== "organizer")) return false;
+		if (revision < state.snapshotRevision || (state.mode && mode !== state.mode)) return false;
 
-		if (revision < state.snapshotRevision) return;
+		applyCommonTexts(snapshot.Texts || {});
+		if (mode === "organizer") renderOrganizer(snapshot);
+		else renderPublic(snapshot, view);
+		state.snapshotRevision = revision;
+		state.snapshot = snapshot;
+		state.mode = mode;
+		return true;
+	};
 
+	const open = (payload) => {
 		try {
-			applyCommonTexts(snapshot.Texts || {});
-
-			if (mode === "organizer") renderOrganizer(snapshot);
-			else renderPublic(snapshot, payload.View);
+			if (!renderSnapshot(payload?.Snapshot, payload?.View)) {
+				requestClose();
+				return;
+			}
 		} catch (_) {
 			requestClose();
 			return;
 		}
 
-		state.snapshotRevision = revision;
-		state.snapshot = snapshot;
 		state.open = true;
-		state.mode = mode;
-
 		byId("app")?.classList.add("is-open");
 		byId("app")?.setAttribute("aria-hidden", "false");
 		setDocumentVisibility(true);
 	};
 
+	const sendOrganizerAction = async (route, payload = {}) => {
+		if (!state.open || state.mode !== "organizer" || state.pending.has(route)) return;
+		const requestId = nextRequestId();
+		state.pending.set(route, requestId);
+		organizerButtons.find((button) => button.dataset.organizerAction === route)?.classList.add("is-processing");
+
+		const result = await post(route, { RequestId: requestId, ...payload });
+		if (!result?.Accepted && state.pending.get(route) === requestId) {
+			state.pending.delete(route);
+			organizerButtons.find((button) => button.dataset.organizerAction === route)?.classList.remove("is-processing");
+			showToast(state.texts.ToastFallback);
+		}
+	};
+
 	fighters.forEach((fighter) => {
 		fighter.addEventListener("click", () => {
 			if (!state.open || state.mode !== "public") return;
-			const current = fighter.dataset.side;
-			setSelection(current, state.snapshot);
+			setSelection(fighter.dataset.side, state.snapshot);
 		});
 	});
 
 	byId("bet-button")?.addEventListener("click", async () => {
 		if (!state.open || state.mode !== "public" || state.pending.has("bet")) return;
-
 		if (!state.selectedSide) {
 			showToast(state.texts.SelectRequired);
 			return;
 		}
 
-		const amount = Number(byId("bet-amount")?.value);
 		const requestId = nextRequestId();
 		state.pending.set("bet", requestId);
 		setBetProcessing(true);
-
-		const result = await post("attemptBet", { RequestId: requestId, Side: state.selectedSide, Amount: amount });
+		const result = await post("attemptBet", {
+			RequestId: requestId,
+			Side: state.selectedSide,
+			Amount: Number(byId("bet-amount")?.value)
+		});
 		if (!result?.Accepted && state.pending.get("bet") === requestId) {
 			state.pending.delete("bet");
 			setBetProcessing(false);
@@ -265,27 +318,45 @@
 	});
 
 	organizerButtons.forEach((button) => {
-		button.addEventListener("click", async () => {
-			if (!state.open || state.mode !== "organizer" || state.pending.has("organizer")) return;
-
+		button.addEventListener("click", () => {
+			if (button.disabled || !state.open || state.mode !== "organizer") return;
 			const action = safeString(button.dataset.organizerAction);
-			const requestId = nextRequestId();
-			state.pending.set("organizer", requestId);
-			button.classList.add("is-processing");
-
-			const result = await post("organizerPreview", { RequestId: requestId, Action: action });
-			if (!result?.Accepted && state.pending.get("organizer") === requestId) {
-				state.pending.delete("organizer");
-				button.classList.remove("is-processing");
-				showToast(state.texts.ToastFallback);
+			if (action === "createEvent") {
+				setModal("create-event-modal", true);
+				byId("event-title-input")?.focus();
+				return;
 			}
+			if (action === "cancelEvent") {
+				setModal("cancel-event-modal", true);
+				return;
+			}
+			if (organizerRoutes.has(action)) void sendOrganizerAction(action);
 		});
 	});
 
+	byId("create-event-form")?.addEventListener("submit", (event) => {
+		event.preventDefault();
+		if (state.pending.has("createEvent")) return;
+		setModal("create-event-modal", false);
+		void sendOrganizerAction("createEvent", {
+			Title: safeString(byId("event-title-input")?.value),
+			FighterA: Number(byId("fighter-a-passport")?.value),
+			FighterB: Number(byId("fighter-b-passport")?.value)
+		});
+	});
+
+	byId("cancel-create-event")?.addEventListener("click", () => setModal("create-event-modal", false));
+	byId("keep-event")?.addEventListener("click", () => setModal("cancel-event-modal", false));
+	byId("confirm-cancel-event")?.addEventListener("click", () => {
+		setModal("cancel-event-modal", false);
+		void sendOrganizerAction("cancelEvent");
+	});
 	byId("close-button")?.addEventListener("click", requestClose);
 
 	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && state.open) requestClose();
+		if (event.key !== "Escape" || !state.open) return;
+		if (!byId("create-event-modal")?.hidden || !byId("cancel-event-modal")?.hidden) closeModals();
+		else requestClose();
 	});
 
 	window.addEventListener("error", requestClose);
@@ -301,8 +372,13 @@
 		}
 
 		if (data.Action === "close") {
-			state.snapshot = null;
 			close();
+			return;
+		}
+
+		if (data.Action === "snapshot") {
+			if (!state.open) return;
+			try { renderSnapshot(data.Payload); } catch (_) { requestClose(); }
 			return;
 		}
 
@@ -314,7 +390,7 @@
 
 			state.pending.delete(kind);
 			if (kind === "bet") setBetProcessing(false);
-			if (kind === "organizer") organizerButtons.forEach((button) => button.classList.remove("is-processing"));
+			organizerButtons.find((button) => button.dataset.organizerAction === kind)?.classList.remove("is-processing");
 			showToast(payload.Message);
 		}
 	});

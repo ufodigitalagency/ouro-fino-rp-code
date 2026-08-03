@@ -1,5 +1,6 @@
 local PublicZone = "AF_OFC:Public"
 local OrganizerZone = "AF_OFC:Organizer"
+local GongZone = "AF_OFC:Gong"
 
 local Npc = nil
 local SetupComplete = false
@@ -9,6 +10,7 @@ local UiMode = nil
 local SessionToken = nil
 local RequestSequence = 0
 local PendingOpenRequest = 0
+local PendingGongRequest = 0
 
 local function nextRequestId()
 	RequestSequence = RequestSequence + 1
@@ -46,6 +48,10 @@ local function removeTargets()
 
 	pcall(function()
 		exports.target:RemCircleZone(OrganizerZone)
+	end)
+
+	pcall(function()
+		exports.target:RemCircleZone(GongZone)
 	end)
 end
 
@@ -111,6 +117,7 @@ local function createNpc()
 		return false
 	end
 
+	DecorSetBool(Npc,"CREATIVE_PED",true)
 	SetEntityAsMissionEntity(Npc,true,true)
 	SetEntityLoadCollisionFlag(Npc,true)
 	FreezeEntityPosition(Npc,true)
@@ -185,6 +192,22 @@ local function registerTargets()
 			}
 		})
 	end
+
+	if Config.Gong.Enabled then
+		exports.target:AddCircleZone(GongZone,Config.Gong.Coords,Config.Gong.TargetRadius,{
+			name = GongZone,
+			useZ = false
+		},{
+			Distance = Config.Gong.TargetDistance,
+			options = {
+				{
+					event = "af_ofc:targetRingGong",
+					label = Config.OperationalTexts.Target.RingGong,
+					tunnel = "client"
+				}
+			}
+		})
+	end
 end
 
 local function setup()
@@ -233,6 +256,23 @@ end)
 RegisterNetEvent("af_ofc:targetOrganizerPanel",function()
 	PendingOpenRequest = nextRequestId()
 	TriggerServerEvent("af_ofc:requestOrganizerDesk",PendingOpenRequest)
+end)
+
+RegisterNetEvent("af_ofc:targetRingGong",function()
+	PendingGongRequest = nextRequestId()
+	TriggerServerEvent("af_ofc:requestRingGong",PendingGongRequest)
+end)
+
+RegisterNetEvent("af_ofc:ringGongAuthorized",function(Data)
+	if type(Data) ~= "table" or tonumber(Data.RequestId) ~= PendingGongRequest or type(Data.SessionToken) ~= "string" then
+		return
+	end
+
+	PendingGongRequest = 0
+	TriggerServerEvent("af_ofc:ringGong",{
+		RequestId = Data.RequestId,
+		SessionToken = Data.SessionToken
+	})
 end)
 
 RegisterNetEvent("af_ofc:openAuthorized",function(Data)
@@ -284,6 +324,14 @@ RegisterNetEvent("af_ofc:actionResult",function(Data)
 	SendNUIMessage({ Action = "actionResult", Payload = Data })
 end)
 
+RegisterNetEvent("af_ofc:snapshot",function(Snapshot)
+	if not UiOpen or type(Snapshot) ~= "table" or Snapshot.Mode ~= UiMode then
+		return
+	end
+
+	SendNUIMessage({ Action = "snapshot", Payload = Snapshot })
+end)
+
 RegisterNetEvent("af_ofc:forceClose",function()
 	closeUi(false)
 end)
@@ -309,19 +357,48 @@ RegisterNUICallback("attemptBet",function(Data,Callback)
 	Callback({ Accepted = true })
 end)
 
-RegisterNUICallback("organizerPreview",function(Data,Callback)
-	if not UiOpen or UiMode ~= "organizer" or not SessionToken or type(Data) ~= "table" or Config.OrganizerPreviewActions[Data.Action] ~= true then
+local function organizerCallback(EventName,Data,Callback,Fields)
+	if not UiOpen or UiMode ~= "organizer" or not SessionToken or type(Data) ~= "table" then
 		Callback({ Accepted = false })
 		return
 	end
 
 	local RequestId = tonumber(Data.RequestId) or nextRequestId()
-	TriggerServerEvent("af_ofc:organizerPreview",{
+	local Payload = {
 		RequestId = RequestId,
-		SessionToken = SessionToken,
-		Action = Data.Action
-	})
+		SessionToken = SessionToken
+	}
+
+	for _,Field in ipairs(Fields or {}) do
+		Payload[Field] = Data[Field]
+	end
+
+	TriggerServerEvent(EventName,Payload)
 	Callback({ Accepted = true })
+end
+
+RegisterNUICallback("createEvent",function(Data,Callback)
+	organizerCallback("af_ofc:createEvent",Data,Callback,{ "Title","FighterA","FighterB" })
+end)
+
+RegisterNUICallback("announceEvent",function(Data,Callback)
+	organizerCallback("af_ofc:announceEvent",Data,Callback)
+end)
+
+RegisterNUICallback("openBets",function(Data,Callback)
+	organizerCallback("af_ofc:openBets",Data,Callback)
+end)
+
+RegisterNUICallback("closeBets",function(Data,Callback)
+	organizerCallback("af_ofc:closeBets",Data,Callback)
+end)
+
+RegisterNUICallback("cancelEvent",function(Data,Callback)
+	organizerCallback("af_ofc:cancelEvent",Data,Callback)
+end)
+
+RegisterNUICallback("startFight",function(Data,Callback)
+	organizerCallback("af_ofc:startFight",Data,Callback)
 end)
 
 AddEventHandler("onResourceStop",function(Resource)

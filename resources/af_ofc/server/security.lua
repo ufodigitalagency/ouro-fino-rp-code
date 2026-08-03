@@ -7,6 +7,7 @@ OFC.Security = OFC.Security or {}
 local RateLimitsBySource = {}
 local RateLimitsByPassport = {}
 local Sessions = {}
+local ActionTokens = {}
 
 local function finiteNumber(Value)
 	Value = tonumber(Value)
@@ -15,6 +16,10 @@ end
 
 local function clearSession(Source)
 	Sessions[tonumber(Source)] = nil
+end
+
+local function clearActionTokens(Source)
+	ActionTokens[tonumber(Source)] = nil
 end
 
 function OFC.Security.ValidateRequestId(RequestId)
@@ -43,6 +48,10 @@ function OFC.Security.ValidatePlayer(Source)
 	end
 
 	local State = Player(Source).state
+	if State.Active ~= true then
+		return false,Passport,"invalid_character"
+	end
+
 	if State.Death == true or State.Crawl == true then
 		return false,Passport,"invalid_state"
 	end
@@ -125,6 +134,51 @@ function OFC.Security.CloseSession(Source,Token)
 	return false
 end
 
+function OFC.Security.GetSessionSources(Mode)
+	local Sources = {}
+	local Now = os.time()
+
+	for Source,Session in pairs(Sessions) do
+		if Now > Session.ExpiresAt or not GetPlayerName(Source) or vRP.Passport(Source) ~= Session.Passport then
+			clearSession(Source)
+		elseif Session.Mode == Mode then
+			Sources[#Sources + 1] = Source
+		end
+	end
+
+	return Sources
+end
+
+function OFC.Security.CreateActionToken(Source,Passport,Action)
+	Source = tonumber(Source)
+	Passport = tonumber(Passport)
+	local Token = ("%s:%s:%s:%s:%s"):format(Passport,Source,Action,os.time(),math.random(100000,999999))
+
+	ActionTokens[Source] = ActionTokens[Source] or {}
+	ActionTokens[Source][Action] = {
+		Passport = Passport,
+		Token = Token,
+		ExpiresAt = os.time() + Config.Interaction.ActionTokenTimeout
+	}
+	return Token
+end
+
+function OFC.Security.ConsumeActionToken(Source,Passport,Token,Action)
+	Source = tonumber(Source)
+	Passport = tonumber(Passport)
+	local SourceTokens = ActionTokens[Source]
+	local Entry = SourceTokens and SourceTokens[Action]
+	if not Entry or Entry.Passport ~= Passport or Entry.Token ~= tostring(Token or "") or os.time() > Entry.ExpiresAt then
+		return false
+	end
+
+	SourceTokens[Action] = nil
+	if not next(SourceTokens) then
+		clearActionTokens(Source)
+	end
+	return true
+end
+
 function OFC.Security.FiniteInteger(Value,Minimum,Maximum)
 	Value = finiteNumber(Value)
 	if not Value or Value % 1 ~= 0 then
@@ -146,10 +200,20 @@ AddEventHandler("Disconnect",function(Passport)
 			clearSession(Source)
 		end
 	end
+
+	for Source,Tokens in pairs(ActionTokens) do
+		for _,Entry in pairs(Tokens) do
+			if Entry.Passport == Passport then
+				clearActionTokens(Source)
+				break
+			end
+		end
+	end
 end)
 
 AddEventHandler("playerDropped",function()
 	local Source = tonumber(source)
 	RateLimitsBySource[Source] = nil
 	clearSession(Source)
+	clearActionTokens(Source)
 end)

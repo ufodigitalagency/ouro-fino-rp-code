@@ -18,6 +18,10 @@
 	box-sizing: border-box;
 }
 
+[hidden] {
+	display: none !important;
+}
+
 html,
 body {
 	width: 100%;
@@ -77,7 +81,10 @@ button {
 	position: relative;
 	width: min(1180px, 94vw);
 	max-height: min(820px, 92vh);
-	overflow: hidden auto;
+	overflow-x: clip;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(226, 189, 112, 0.42) transparent;
 	border: 1px solid rgba(226, 189, 112, 0.28);
 	background:
 		linear-gradient(115deg, rgba(141, 16, 24, 0.10), transparent 32%),
@@ -87,6 +94,13 @@ button {
 	clip-path: polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px);
 	transform: translateY(16px) scale(0.985);
 	transition: transform 260ms cubic-bezier(.2, .9, .25, 1);
+}
+
+.ofc-shell::-webkit-scrollbar { width: 6px; }
+.ofc-shell::-webkit-scrollbar-track { background: transparent; }
+.ofc-shell::-webkit-scrollbar-thumb {
+	border-radius: 8px;
+	background: rgba(226, 189, 112, 0.42);
 }
 
 .app.is-open .ofc-shell {
@@ -121,8 +135,9 @@ button {
 }
 
 .ambient-gold {
-	right: -260px;
+	right: 0;
 	bottom: -100px;
+	opacity: 0.07;
 	background: var(--gold);
 }
 
@@ -494,6 +509,11 @@ button {
 	animation: highlight 650ms ease;
 }
 
+.betting-block.is-open {
+	border-color: rgba(104, 191, 136, 0.48);
+	box-shadow: inset 0 0 34px rgba(104, 191, 136, 0.055);
+}
+
 .betting-title,
 .card-heading {
 	display: flex;
@@ -801,6 +821,18 @@ button {
 	transform: translateX(2px);
 }
 
+.action-grid button:disabled {
+	opacity: 0.38;
+	cursor: not-allowed;
+	filter: grayscale(0.7);
+}
+
+.action-grid button:disabled:hover {
+	border-color: var(--line);
+	background: rgba(255, 255, 255, 0.022);
+	transform: none;
+}
+
 .action-grid button i {
 	width: 6px;
 	height: 6px;
@@ -813,6 +845,100 @@ button {
 	pointer-events: none;
 	opacity: 0.55;
 }
+
+.modal-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 18;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: rgba(3, 4, 5, 0.76);
+	backdrop-filter: blur(8px);
+}
+
+.modal-card {
+	width: min(620px, 92vw);
+	padding: 28px;
+	border: 1px solid rgba(226, 189, 112, 0.34);
+	background: linear-gradient(145deg, rgba(20, 22, 25, 0.995), rgba(7, 8, 9, 0.995));
+	box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
+}
+
+.modal-card.compact { width: min(540px, 92vw); }
+
+.modal-card h2 {
+	margin: 0 0 22px;
+	color: var(--warm);
+	font-size: 26px;
+	font-style: italic;
+	font-weight: 800;
+	letter-spacing: 0.5px;
+}
+
+.modal-card p {
+	margin: 0 0 24px;
+	color: #c3bdb4;
+	font-family: var(--font-ui);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.65;
+}
+
+.modal-card label {
+	display: grid;
+	gap: 8px;
+	color: var(--muted);
+	font-family: var(--font-ui);
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.8px;
+}
+
+.modal-card input {
+	width: 100%;
+	height: 48px;
+	padding: 0 14px;
+	border: 1px solid var(--line);
+	outline: 0;
+	background: rgba(255, 255, 255, 0.035);
+	color: var(--warm);
+	font-family: var(--font-ui);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.modal-card input:focus { border-color: rgba(226, 189, 112, 0.55); }
+
+.modal-fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+	margin-top: 16px;
+}
+
+.modal-actions {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+	margin-top: 24px;
+}
+
+.modal-actions button {
+	min-height: 48px;
+	padding: 0 16px;
+	border: 1px solid var(--line);
+	color: var(--warm);
+	font-size: 10px;
+	font-style: italic;
+	font-weight: 800;
+	letter-spacing: 0.5px;
+	cursor: pointer;
+}
+
+.modal-actions .secondary-action { background: rgba(255, 255, 255, 0.025); }
+.modal-actions .primary-action { background: linear-gradient(100deg, var(--red), var(--red-hot)); }
+.modal-actions .danger-action { background: rgba(141, 16, 24, 0.72); }
 
 .toast {
 	position: fixed;
