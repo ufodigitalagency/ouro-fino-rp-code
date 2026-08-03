@@ -287,6 +287,9 @@ function Lil.ServerVehicle(Model,Coords,Plate,Nitro,Doors,Body,Fuel,Seatbelt,Dri
 		return false
 	end
 
+	local SpawnModel = exports.vrp:VehicleModel(Model) or Model
+	Model = SpawnModel
+
 	if type(Model) == "string" then
 		Model = GetHashKey(Model)
 	end
@@ -332,7 +335,7 @@ function Lil.ServerVehicle(Model,Coords,Plate,Nitro,Doors,Body,Fuel,Seatbelt,Dri
 	Entity(Vehicle).state.Drift = Drift or false
 	Entity(Vehicle).state.Seatbelt = Seatbelt or false
 
-	return true,Network,Vehicle,Plate
+	return true,Network,Vehicle,Plate,SpawnModel
 end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:RESPAWNS
@@ -368,8 +371,10 @@ AddEventHandler("garages:Respawns",function(Plate)
 	Active[Passport] = true
 
 	local Mods = vRP.GetSrvData("LsCustoms:"..OtherPassport..":"..Model,true)
-	local Exist,Network,Entitys = Lil.ServerVehicle(Model,Respawn,Plate,VehicleData.Nitro,VehicleData.Doors,VehicleData.Body,VehicleData.Fuel,VehicleData.Seatbelt,VehicleData.Drift)
+	local Exist,Network,Entitys,_,SpawnModel = Lil.ServerVehicle(Model,Respawn,Plate,VehicleData.Nitro,VehicleData.Doors,VehicleData.Body,VehicleData.Fuel,VehicleData.Seatbelt,VehicleData.Drift)
 	if not Exist then
+		print(("[garages] Falha ao criar veiculo: Passport=%s Vehicle=%s Model=%s"):format(OtherPassport,Model,exports.vrp:VehicleModel(Model) or Model))
+		TriggerClientEvent("Notify",source,"Aviso","Nao foi possivel retirar o veiculo.","amarelo",5000)
 		Active[Passport] = nil
 		return false
 	end
@@ -377,7 +382,7 @@ AddEventHandler("garages:Respawns",function(Plate)
 	local Players = vRPC.Players(source)
 	for _,OtherSource in pairs(Players) do
 		async(function()
-			vCLIENT.CreateVehicle(OtherSource,Model,Network,VehicleData.Engine,VehicleData.Health,Mods,VehicleData.Windows,VehicleData.Tyres)
+			vCLIENT.CreateVehicle(OtherSource,SpawnModel,Network,VehicleData.Engine,VehicleData.Health,Mods,VehicleData.Windows,VehicleData.Tyres)
 		end)
 	end
 
@@ -890,17 +895,20 @@ AddEventHandler("garages:Spawn",function(Name,Number)
 	local Coords = vCLIENT.SpawnPosition(source,Number)
 	if Coords then
 		local Mods = vRP.GetSrvData("LsCustoms:"..Passport..":"..Name,true)
-		local Exist,Network,Entitys = Lil.ServerVehicle(Name,Coords,Plate,Vehicle.Nitro,Vehicle.Doors,Vehicle.Body,Vehicle.Fuel,Vehicle.Seatbelt,Vehicle.Drift)
+		local Exist,Network,Entitys,_,SpawnModel = Lil.ServerVehicle(Name,Coords,Plate,Vehicle.Nitro,Vehicle.Doors,Vehicle.Body,Vehicle.Fuel,Vehicle.Seatbelt,Vehicle.Drift)
 		if Exist then
 			local Players = vRPC.Players(source)
 			for _,OtherSource in pairs(Players) do
 				async(function()
-					vCLIENT.CreateVehicle(OtherSource,Name,Network,Vehicle.Engine,Vehicle.Health,Mods,Vehicle.Windows,Vehicle.Tyres)
+					vCLIENT.CreateVehicle(OtherSource,SpawnModel,Network,Vehicle.Engine,Vehicle.Health,Mods,Vehicle.Windows,Vehicle.Tyres)
 				end)
 			end
 
 			Entity(Entitys).state.Lockpick = Passport
 			Spawn[Plate] = { Passport,Name,Entitys,Network }
+		else
+			print(("[garages] Falha ao criar veiculo: Passport=%s Vehicle=%s Model=%s"):format(Passport,Name,exports.vrp:VehicleModel(Name) or Name))
+			return CancelProcess("Nao foi possivel retirar o veiculo.")
 		end
 	end
 
