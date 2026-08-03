@@ -1,0 +1,60 @@
+(() => {
+    let root;
+    let progressRing;
+    let count;
+    let state = null;
+    let rechargeEndsAt = 0;
+
+    const ensure = () => {
+        if (root) return;
+
+        root = document.createElement("div");
+        root.id = "of-vampire-status";
+        root.hidden = true;
+        root.innerHTML = `
+            <svg viewBox="0 0 44 44" aria-hidden="true">
+                <circle class="of-vampire-track" cx="22" cy="22" r="18"></circle>
+                <circle class="of-vampire-progress" cx="22" cy="22" r="18"></circle>
+            </svg>
+            <span class="of-vampire-mark">V</span>
+            <span class="of-vampire-count"></span>`;
+        document.body.appendChild(root);
+        progressRing = root.querySelector(".of-vampire-progress");
+        count = root.querySelector(".of-vampire-count");
+    };
+
+    const render = () => {
+        ensure();
+        const visible = Boolean(state && state.Visible);
+        root.hidden = !visible;
+        if (!visible) return;
+
+        const maximum = Math.max(1, Number(state.Maximum) || 1);
+        const charges = Math.max(0, Math.min(maximum, Number(state.Charges) || 0));
+        let progress = charges / maximum;
+
+        if (charges === 0 && rechargeEndsAt && state.RechargeDuration) {
+            const remaining = Math.max(0, rechargeEndsAt - Date.now());
+            progress = Math.max(0, Math.min(1, 1 - remaining / Number(state.RechargeDuration)));
+        }
+
+        progressRing.style.strokeDashoffset = String(113.1 * (1 - progress));
+        root.classList.toggle("is-active", Boolean(state.Active));
+        root.classList.toggle("is-recharging", charges === 0);
+        count.textContent = `${charges}/${maximum}`;
+    };
+
+    const update = (nextState) => {
+        state = nextState;
+        rechargeEndsAt = Number(nextState && nextState.RechargeRemaining) > 0
+            ? Date.now() + Number(nextState.RechargeRemaining)
+            : 0;
+        render();
+    };
+
+    window.addEventListener("message", (event) => {
+        if (event.data && event.data.Action === "Vampire") update(event.data.Payload);
+    });
+
+    setInterval(render, 250);
+})();

@@ -1,0 +1,67 @@
+#of-vampire-status {
+    position: fixed;
+    right: 13.1rem;
+    bottom: 4.1rem;
+    width: 2.75rem;
+    height: 3.45rem;
+    color: rgb(166 111 237);
+    font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+    pointer-events: none;
+    z-index: 20;
+}
+
+#of-vampire-status[hidden] { display: none; }
+
+#of-vampire-status svg {
+    display: block;
+    width: 2.75rem;
+    height: 2.75rem;
+    transform: rotate(-90deg);
+    filter: drop-shadow(.0625rem .0625rem .125rem rgb(0 0 0 / .5));
+}
+
+.of-vampire-track,
+.of-vampire-progress {
+    fill: rgba(3, 5, 31, .58);
+    stroke-width: 4;
+}
+
+.of-vampire-track { stroke: rgb(166 111 237 / .28); }
+
+.of-vampire-progress {
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-dasharray: 113.1;
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset .25s linear, stroke .2s ease;
+}
+
+.of-vampire-mark {
+    position: absolute;
+    top: .57rem;
+    left: 0;
+    width: 2.75rem;
+    color: #fff;
+    font-size: 1.05rem;
+    font-weight: 800;
+    font-style: italic;
+    line-height: 1.5rem;
+    text-align: center;
+    text-shadow: .0625rem .0625rem .125rem rgb(0 0 0 / .65);
+}
+
+.of-vampire-count {
+    display: block;
+    margin-top: .08rem;
+    color: #fff;
+    font-size: .74rem;
+    font-weight: 700;
+    line-height: .9rem;
+    text-align: center;
+    text-shadow: .0625rem .0625rem .125rem rgb(0 0 0 / .7);
+}
+
+#of-vampire-status.is-active { color: rgb(166 111 237); }
+#of-vampire-status:not(.is-active) { color: rgb(116 88 150); }
+#of-vampire-status.is-recharging .of-vampire-progress { stroke: rgb(166 111 237 / .7); }

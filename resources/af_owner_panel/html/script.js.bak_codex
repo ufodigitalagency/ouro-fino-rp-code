@@ -1,0 +1,475 @@
+const panel = document.getElementById("panel");
+const modalBackdrop = document.getElementById("modalBackdrop");
+const confirmBackdrop = document.getElementById("confirmBackdrop");
+const resource = typeof GetParentResourceName === "function" ? GetParentResourceName() : "af_owner_panel";
+
+let catalog = { items: [], weapons: [] };
+let players = [];
+let selectedPlayer = null;
+let selectedItem = null;
+let pendingConfirm = null;
+
+function post(name, data = {}) {
+    return fetch(`https://${resource}/${name}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=UTF-8" },
+        body: JSON.stringify(data)
+    });
+}
+
+function byId(id) {
+    return document.getElementById(id);
+}
+
+function on(id, event, handler) {
+    const element = byId(id);
+    if (element) {
+        element.addEventListener(event, handler);
+    }
+}
+
+function normalize(text) {
+    return String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function safeNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function value(id) {
+    const element = byId(id);
+    return element ? element.value : "";
+}
+
+function numberValue(id, fallback = 0) {
+    return safeNumber(value(id), fallback);
+}
+
+function itemList() {
+    return Array.isArray(catalog.items) ? catalog.items : [];
+}
+
+function itemLabel(item) {
+    return `${item.name || item.code} (${item.code})`;
+}
+
+function selectedPassport() {
+    return selectedPlayer ? safeNumber(selectedPlayer.passport, 0) : 0;
+}
+
+function hasSelectedPlayer(showAlert = true) {
+    if (selectedPassport() > 0) {
+        return true;
+    }
+
+    if (showAlert) {
+        openConfirm({
+            title: "Selecione um jogador",
+            text: "Escolha um jogador na lista da esquerda antes de executar esta ação.",
+            confirmText: "Entendi",
+            danger: false,
+            onConfirm: closeConfirm
+        });
+    }
+
+    return false;
+}
+
+function closePanel() {
+    panel.hidden = true;
+    panel.classList.add("hidden");
+    closeItemModal(false);
+    closeConfirm(false);
+    post("close").catch(() => {});
+}
+
+function setHidden(element, hidden) {
+    if (!element) return;
+    element.hidden = hidden;
+    element.classList.toggle("hidden", hidden);
+}
+
+function refreshClock() {
+    const now = new Date();
+    const date = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const time = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    const clockDate = byId("clockDate");
+    const clockTime = byId("clockTime");
+    if (clockDate) clockDate.textContent = `${date} ${time}`;
+    if (clockTime) clockTime.textContent = "Central F9";
+}
+
+function updateSelectedCard() {
+    const name = selectedPlayer ? selectedPlayer.name || "Jogador" : "Selecione um jogador";
+    const passport = selectedPlayer ? selectedPlayer.passport || "—" : "—";
+    const source = selectedPlayer ? selectedPlayer.source || "—" : "—";
+
+    byId("selectedName").textContent = name;
+    byId("selectedBadge").textContent = selectedPlayer ? `#${passport}` : "#—";
+    byId("selectedPassport").textContent = passport;
+    byId("selectedSource").textContent = source;
+    byId("selectedStatus").textContent = selectedPlayer ? "Online" : "Aguardando";
+
+    const modalTarget = byId("modalTarget");
+    if (modalTarget) {
+        modalTarget.textContent = selectedPlayer ? `#${passport} • ${name}` : "Nenhum jogador selecionado";
+    }
+}
+
+function selectPlayer(passport) {
+    const wanted = String(passport || "");
+    selectedPlayer = players.find(player => String(player.passport || "") === wanted) || null;
+    updateSelectedCard();
+    renderPlayers();
+}
+
+function renderPlayers() {
+    const list = byId("playersList");
+    if (!list) return;
+
+    const query = normalize(value("playerSearch"));
+    const filtered = players.filter(player => {
+        const name = normalize(player.name);
+        const passport = normalize(player.passport);
+        const source = normalize(player.source);
+        return !query || name.includes(query) || passport.includes(query) || source.includes(query);
+    });
+
+    list.innerHTML = "";
+
+    if (!filtered.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = players.length ? "Nenhum jogador encontrado." : "Nenhum jogador online encontrado.";
+        list.appendChild(empty);
+        return;
+    }
+
+    for (const player of filtered) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "player-row";
+        if (selectedPlayer && String(selectedPlayer.passport) === String(player.passport)) {
+            button.classList.add("active");
+        }
+
+        button.innerHTML = `
+            <span class="mini-badge">#${player.passport || "?"}</span>
+            <strong>${player.name || "Jogador"}</strong>
+            <small>source ${player.source || "?"}</small>
+        `;
+        button.addEventListener("click", () => selectPlayer(player.passport));
+        list.appendChild(button);
+    }
+}
+
+function renderServerState(payload) {
+    if (!payload) return;
+    if (payload.weather && byId("serverWeather")) byId("serverWeather").value = payload.weather;
+    if (payload.hour !== undefined && byId("serverHour")) byId("serverHour").value = payload.hour;
+    if (payload.minute !== undefined && byId("serverMinute")) byId("serverMinute").value = payload.minute;
+}
+
+function setActiveTab(tab) {
+    document.querySelectorAll(".tab").forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === tab);
+    });
+
+    document.querySelectorAll(".tab-page").forEach(page => {
+        page.classList.toggle("active", page.id === `tab-${tab}`);
+    });
+}
+
+function renderItemResults() {
+    const results = byId("itemResults");
+    if (!results) return;
+
+    const query = normalize(value("itemSearch"));
+    const items = itemList().filter(item => {
+        if (!query) return true;
+        return normalize(item.name).includes(query) || normalize(item.code).includes(query) || normalize(item.type).includes(query);
+    }).slice(0, 80);
+
+    results.innerHTML = "";
+
+    if (!itemList().length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "A lista de itens ainda não carregou. Feche e abra a central novamente.";
+        results.appendChild(empty);
+        return;
+    }
+
+    if (!items.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "Nenhum item encontrado com esse filtro.";
+        results.appendChild(empty);
+        return;
+    }
+
+    for (const item of items) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "item-row";
+        if (selectedItem && selectedItem.code === item.code) {
+            button.classList.add("active");
+        }
+
+        button.innerHTML = `
+            <span class="item-avatar">${String(item.name || item.code || "?").slice(0, 1).toUpperCase()}</span>
+            <span><strong>${item.name || item.code}</strong><small>${item.code} • ${item.type || "Item"}</small></span>
+        `;
+        button.addEventListener("click", () => {
+            selectedItem = item;
+            updateSelectedItemText();
+            renderItemResults();
+        });
+        results.appendChild(button);
+    }
+}
+
+function updateSelectedItemText() {
+    const element = byId("selectedItemText");
+    if (element) {
+        element.textContent = selectedItem ? itemLabel(selectedItem) : "Nenhum item selecionado";
+    }
+}
+
+function openItemModal() {
+    if (!hasSelectedPlayer()) return;
+
+    selectedItem = null;
+    updateSelectedItemText();
+    byId("itemSearch").value = "";
+    byId("catalogAmount").value = "1";
+    updateSelectedCard();
+    renderItemResults();
+    setHidden(modalBackdrop, false);
+    setTimeout(() => byId("itemSearch")?.focus(), 30);
+}
+
+function closeItemModal(sendFocus = true) {
+    setHidden(modalBackdrop, true);
+    selectedItem = null;
+    updateSelectedItemText();
+    if (sendFocus) {
+        panel?.focus?.();
+    }
+}
+
+function openConfirm(options) {
+    pendingConfirm = options || null;
+    byId("confirmTitle").textContent = options?.title || "Confirmar ação";
+    byId("confirmText").textContent = options?.text || "Confirme a ação selecionada.";
+    byId("confirmActionButton").textContent = options?.confirmText || "Confirmar";
+    byId("confirmActionButton").classList.toggle("danger-button", options?.danger !== false);
+
+    const label = byId("confirmLabel");
+    const input = byId("confirmInput");
+    const withInput = !!options?.input;
+    setHidden(label, !withInput);
+    setHidden(input, !withInput);
+    if (withInput) {
+        label.textContent = options.inputLabel || "Motivo";
+        input.placeholder = options.inputPlaceholder || "Motivo";
+        input.value = options.inputValue || "";
+    }
+
+    setHidden(confirmBackdrop, false);
+    setTimeout(() => withInput ? input.focus() : byId("confirmActionButton")?.focus(), 30);
+}
+
+function closeConfirm(sendFocus = true) {
+    setHidden(confirmBackdrop, true);
+    pendingConfirm = null;
+    if (sendFocus) panel?.focus?.();
+}
+
+function submitAdminAction(action, payload = {}) {
+    post("adminAction", { action, passport: selectedPassport(), ...payload });
+}
+
+function handleSimpleAction(action) {
+    if (!hasSelectedPlayer()) return;
+
+    if (action === "tptome") {
+        submitAdminAction("tptome");
+        return;
+    }
+
+    if (action === "ban") {
+        openConfirm({
+            title: "Banir jogador",
+            text: `Deseja banir permanentemente o ID ${selectedPassport()}?`,
+            confirmText: "Banir jogador",
+            input: true,
+            inputLabel: "Motivo do banimento",
+            inputPlaceholder: "Ex: abuso, antirrp, trapaça...",
+            inputValue: "Banimento administrativo",
+            onConfirm: value => submitAdminAction("ban", { reason: value || "Banimento administrativo" })
+        });
+    }
+}
+
+window.addEventListener("message", event => {
+    const action = event.data && event.data.action;
+
+    if (action === "open") {
+        panel.hidden = false;
+        panel.classList.remove("hidden");
+        post("adminAction", { action: "playersList" }).catch(() => {});
+    }
+
+    if (action === "close") {
+        panel.hidden = true;
+        panel.classList.add("hidden");
+        closeItemModal(false);
+        closeConfirm(false);
+    }
+
+    if (action === "catalogMode") {
+        panel.hidden = false;
+        panel.classList.remove("hidden");
+        setActiveTab("inventory");
+        if (selectedPassport() > 0) {
+            openItemModal();
+        }
+    }
+
+    if (action === "catalog") {
+        catalog = event.data.payload || { items: [], weapons: [] };
+        renderItemResults();
+    }
+
+    if (action === "players") {
+        const previousPassport = selectedPlayer && String(selectedPlayer.passport || "");
+        players = Array.isArray(event.data.payload) ? event.data.payload : [];
+        selectedPlayer = players.find(player => String(player.passport || "") === previousPassport) || players[0] || null;
+        updateSelectedCard();
+        renderPlayers();
+    }
+
+    if (action === "serverState") {
+        renderServerState(event.data.payload || {});
+    }
+});
+
+panel.hidden = true;
+panel.classList.add("hidden");
+refreshClock();
+setInterval(refreshClock, 1000);
+
+on("close", "click", closePanel);
+on("playerSearch", "input", renderPlayers);
+on("refreshPlayers", "click", () => post("adminAction", { action: "playersList" }));
+
+on("openItemModal", "click", openItemModal);
+on("closeItemModal", "click", () => closeItemModal());
+on("cancelItemModal", "click", () => closeItemModal());
+on("itemSearch", "input", renderItemResults);
+
+on("giveCatalogItem", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    if (!selectedItem) {
+        openConfirm({
+            title: "Selecione um item",
+            text: "Escolha um item na lista antes de confirmar a entrega.",
+            confirmText: "Entendi",
+            danger: false,
+            onConfirm: closeConfirm
+        });
+        return;
+    }
+
+    post("adminAction", {
+        action: "giveItem",
+        passport: selectedPassport(),
+        item: selectedItem.code,
+        amount: numberValue("catalogAmount", 1)
+    });
+    closeItemModal();
+});
+
+on("closeConfirmModal", "click", () => closeConfirm());
+on("cancelConfirmModal", "click", () => closeConfirm());
+on("confirmActionButton", "click", () => {
+    if (pendingConfirm && typeof pendingConfirm.onConfirm === "function") {
+        pendingConfirm.onConfirm(value("confirmInput"));
+    }
+    closeConfirm();
+});
+
+document.querySelectorAll(".tab").forEach(button => {
+    button.addEventListener("click", () => setActiveTab(button.dataset.tab));
+});
+
+document.querySelectorAll("[data-client]").forEach(button => {
+    button.addEventListener("click", () => {
+        post("clientAction", { action: button.dataset.client });
+    });
+});
+
+document.querySelectorAll("[data-action]").forEach(button => {
+    button.addEventListener("click", () => handleSimpleAction(button.dataset.action));
+});
+
+on("setAdmin", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("setAdmin", { level: numberValue("adminLevel", 1) });
+});
+
+on("removeAdmin", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("removeAdmin");
+});
+
+on("setJob", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("setJob", { job: value("jobName"), level: numberValue("jobLevel", 1) });
+});
+
+on("setPlan", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("setPlan", { plan: value("planName") });
+});
+
+on("removePlan", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("removePlan");
+});
+
+on("giveWeapon", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("giveWeapon", { item: value("weaponItem"), ammo: numberValue("weaponAmmo", 0) });
+});
+
+on("givePoliceKit", "click", () => {
+    if (!hasSelectedPlayer()) return;
+    submitAdminAction("givePoliceKit");
+});
+
+on("setWeather", "click", () => {
+    post("adminAction", { action: "setWeather", weather: value("serverWeather") });
+});
+
+on("setTime", "click", () => {
+    post("adminAction", { action: "setTime", hour: numberValue("serverHour", 12), minute: numberValue("serverMinute", 0) });
+});
+
+on("telaoOn", "click", () => post("telao", { action: "on", url: value("telaoUrl") }));
+on("telaoOff", "click", () => post("telao", { action: "off" }));
+on("telaoUrlBtn", "click", () => post("telao", { action: "url", url: value("telaoUrl") }));
+on("telaoHere", "click", () => post("telao", { action: "here", url: value("telaoUrl") }));
+on("telaoEdit", "click", () => post("telao", { action: "edit" }));
+on("telaoSave", "click", () => post("telao", { action: "save" }));
+
+document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        if (!confirmBackdrop.hidden) return closeConfirm();
+        if (!modalBackdrop.hidden) return closeItemModal();
+        closePanel();
+    }
+});

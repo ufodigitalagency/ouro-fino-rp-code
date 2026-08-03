@@ -1,0 +1,4 @@
+Atualização visual do status Vampiro:
+- Ícone de morcego substituído por presas com gota de sangue.
+- Tamanho e centralização ajustados para o círculo do HUD.
+- Estados ativo, inativo e queimando preservados.

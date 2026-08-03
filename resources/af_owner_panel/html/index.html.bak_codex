@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Central Administrativa</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main id="panel" class="admin-shell hidden" hidden>
+        <section class="admin-window">
+            <header class="topbar">
+                <div class="brand-block">
+                    <span class="brand-icon">OF</span>
+                    <div>
+                        <small>Central Administrativa</small>
+                        <strong>Ouro Fino Roleplay</strong>
+                    </div>
+                </div>
+
+                <div class="topbar-actions">
+                    <span class="owner-pill">Owner • ID 1</span>
+                    <button id="close" class="icon-button" type="button" aria-label="Fechar">×</button>
+                </div>
+            </header>
+
+            <section class="content-grid">
+                <aside class="players-panel">
+                    <div class="section-title">
+                        <span class="title-icon">♙</span>
+                        <strong>Jogadores</strong>
+                    </div>
+
+                    <label class="search-box">
+                        <input id="playerSearch" type="text" placeholder="Pesquisar por ID ou nome..." autocomplete="off">
+                        <span>⌕</span>
+                    </label>
+
+                    <div id="playersList" class="player-list">
+                        <p class="empty-state">Carregando jogadores online...</p>
+                    </div>
+                </aside>
+
+                <section class="main-panel">
+                    <article class="profile-card">
+                        <div class="avatar-card">
+                            <span>👤</span>
+                        </div>
+
+                        <div class="profile-info">
+                            <div class="profile-title">
+                                <span id="selectedBadge" class="rank-badge">#—</span>
+                                <h1 id="selectedName">Selecione um jogador</h1>
+                                <span id="selectedStatus" class="online-badge">Online</span>
+                            </div>
+                            <p><span>Passaporte:</span> <strong id="selectedPassport">—</strong></p>
+                            <p><span>Source:</span> <strong id="selectedSource">—</strong></p>
+                        </div>
+
+                        <div class="profile-meta">
+                            <span id="clockDate">--/--/---- --:--</span>
+                            <span id="clockTime">Central F9</span>
+                            <button id="refreshPlayers" type="button">Atualizar lista</button>
+                        </div>
+                    </article>
+
+                    <nav class="tabs" aria-label="Categorias administrativas">
+                        <button class="tab active" data-tab="actions" type="button">Ações</button>
+                        <button class="tab" data-tab="inventory" type="button">Inventário</button>
+                        <button class="tab" data-tab="permissions" type="button">Permissões</button>
+                        <button class="tab" data-tab="server" type="button">Servidor</button>
+                    </nav>
+
+                    <section id="tab-actions" class="tab-page active">
+                        <div class="action-grid">
+                            <button class="action-card" data-client="god" type="button"><span>♡</span><strong>God / Curar</strong><small>Restaura vida e colete.</small></button>
+                            <button class="action-card" data-client="noclip" type="button"><span>◇</span><strong>Noclip</strong><small>Ativa ou desativa voo admin.</small></button>
+                            <button class="action-card" data-client="tpway" type="button"><span>⌖</span><strong>TP Waypoint</strong><small>Vai até o marcador do mapa.</small></button>
+                            <button class="action-card" data-action="tptome" type="button"><span>⇢</span><strong>Puxar</strong><small>Traz o jogador selecionado.</small></button>
+                            <button class="action-card danger" data-action="ban" type="button"><span>⊘</span><strong>Banir ID</strong><small>Banimento permanente com motivo.</small></button>
+                            <button class="action-card" data-client="dogcds" type="button"><span>⌗</span><strong>DogCDS</strong><small>Capturador de coordenadas.</small></button>
+                            <button class="action-card" data-client="blipsreload" type="button"><span>↻</span><strong>Recarregar Blips</strong><small>Atualiza blips customizados.</small></button>
+                        </div>
+                    </section>
+
+                    <section id="tab-inventory" class="tab-page">
+                        <div class="panel-row">
+                            <article class="form-card feature-card">
+                                <h2>Dar item</h2>
+                                <p>Abra uma busca visual com todos os itens cadastrados na base. Você escolhe pelo nome bonito, e o painel envia o código interno correto.</p>
+                                <button id="openItemModal" type="button">Abrir lista de itens</button>
+                            </article>
+
+                            <article class="form-card">
+                                <h2>Arma / Kit Policial</h2>
+                                <label>Arma</label>
+                                <select id="weaponItem">
+                                    <option value="WEAPON_COMBATPISTOL">G18C / Combat Pistol</option>
+                                    <option value="WEAPON_PISTOL">M1911 / Pistol</option>
+                                    <option value="WEAPON_STUNGUN">Tazer</option>
+                                    <option value="WEAPON_NIGHTSTICK">Cassetete</option>
+                                    <option value="WEAPON_FLASHLIGHT">Lanterna</option>
+                                    <option value="WEAPON_SMG">SMG</option>
+                                    <option value="WEAPON_CARBINERIFLE">M4A1 / Carbine Rifle</option>
+                                    <option value="WEAPON_PUMPSHOTGUN">Pump Shotgun</option>
+                                </select>
+
+                                <label>Munição junto</label>
+                                <input id="weaponAmmo" type="number" min="0" value="80">
+
+                                <div class="button-row">
+                                    <button id="giveWeapon" type="button">Dar arma</button>
+                                    <button id="givePoliceKit" type="button">Dar kit policial</button>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="tab-permissions" class="tab-page">
+                        <div class="panel-row">
+                            <article class="form-card">
+                                <h2>Admin</h2>
+                                <label>Nível Admin</label>
+                                <input id="adminLevel" type="number" min="1" value="1">
+                                <div class="button-row">
+                                    <button id="setAdmin" type="button">Dar Admin</button>
+                                    <button id="removeAdmin" class="danger-button" type="button">Remover Admin</button>
+                                </div>
+                            </article>
+
+                            <article class="form-card">
+                                <h2>Cargo</h2>
+                                <label>Cargo</label>
+                                <select id="jobName">
+                                    <option value="LSPD">Polícia</option>
+                                    <option value="Paramedico">Médico / Enfermeiro</option>
+                                    <option value="Bennys">Mecânico</option>
+                                </select>
+                                <label>Nível</label>
+                                <input id="jobLevel" type="number" min="1" value="1">
+                                <button id="setJob" type="button">Aplicar cargo</button>
+                            </article>
+
+                            <article class="form-card">
+                                <h2>Planos</h2>
+                                <label>Plano</label>
+                                <select id="planName">
+                                    <option value="premium">Premium</option>
+                                    <option value="vip">VIP</option>
+                                    <option value="standard">Standard</option>
+                                </select>
+                                <div class="button-row">
+                                    <button id="setPlan" type="button">Aplicar plano</button>
+                                    <button id="removePlan" class="danger-button" type="button">Remover plano</button>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="tab-server" class="tab-page">
+                        <div class="panel-row">
+                            <article class="form-card">
+                                <h2>Servidor</h2>
+                                <label>Clima</label>
+                                <select id="serverWeather">
+                                    <option value="CLEAR">CLEAR</option>
+                                    <option value="EXTRASUNNY">EXTRASUNNY</option>
+                                    <option value="CLOUDS">CLOUDS</option>
+                                    <option value="OVERCAST">OVERCAST</option>
+                                    <option value="RAIN">RAIN</option>
+                                    <option value="THUNDER">THUNDER</option>
+                                    <option value="FOGGY">FOGGY</option>
+                                    <option value="SMOG">SMOG</option>
+                                    <option value="HALLOWEEN">HALLOWEEN</option>
+                                </select>
+
+                                <label>Horário</label>
+                                <div class="time-row">
+                                    <input id="serverHour" type="number" min="0" max="23" value="12" placeholder="Hora">
+                                    <input id="serverMinute" type="number" min="0" max="59" value="0" placeholder="Minuto">
+                                    <button id="setTime" type="button">Definir hora</button>
+                                </div>
+                                <button id="setWeather" type="button">Definir clima</button>
+                            </article>
+
+                            <article class="form-card telao-card">
+                                <h2>Telão</h2>
+                                <label>Link YouTube / live</label>
+                                <input id="telaoUrl" type="text" placeholder="https://youtu.be/...">
+                                <div class="button-grid">
+                                    <button id="telaoOn" type="button">Ligar</button>
+                                    <button id="telaoOff" class="danger-button" type="button">Desligar</button>
+                                    <button id="telaoUrlBtn" type="button">Trocar link</button>
+                                    <button id="telaoHere" type="button">Colocar aqui</button>
+                                    <button id="telaoEdit" type="button">Editar telão</button>
+                                    <button id="telaoSave" type="button">Salvar telão</button>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
+                </section>
+            </section>
+        </section>
+    </main>
+
+    <section id="modalBackdrop" class="modal-backdrop hidden" hidden>
+        <article class="item-modal">
+            <header>
+                <div>
+                    <small>Inventário</small>
+                    <h2>Dar item</h2>
+                </div>
+                <button id="closeItemModal" class="icon-button" type="button" aria-label="Fechar">×</button>
+            </header>
+
+            <div class="modal-target">
+                <span>Destino</span>
+                <strong id="modalTarget">Nenhum jogador selecionado</strong>
+            </div>
+
+            <label>Pesquisar item</label>
+            <input id="itemSearch" type="text" placeholder="Digite nome, código ou categoria..." autocomplete="off">
+
+            <div id="itemResults" class="item-results"></div>
+
+            <div class="selected-item-box">
+                <span>Selecionado</span>
+                <strong id="selectedItemText">Nenhum item selecionado</strong>
+            </div>
+
+            <label>Quantidade</label>
+            <input id="catalogAmount" type="number" min="1" value="1">
+
+            <footer>
+                <button id="cancelItemModal" class="ghost-button" type="button">Cancelar</button>
+                <button id="giveCatalogItem" type="button">Dar item</button>
+            </footer>
+        </article>
+    </section>
+
+    <section id="confirmBackdrop" class="modal-backdrop hidden" hidden>
+        <article class="confirm-modal">
+            <header>
+                <div>
+                    <small>Ação administrativa</small>
+                    <h2 id="confirmTitle">Confirmar ação</h2>
+                </div>
+                <button id="closeConfirmModal" class="icon-button" type="button" aria-label="Fechar">×</button>
+            </header>
+            <p id="confirmText">Confirme a ação selecionada.</p>
+            <label id="confirmLabel" class="hidden">Motivo</label>
+            <input id="confirmInput" class="hidden" type="text" placeholder="Motivo da ação">
+            <footer>
+                <button id="cancelConfirmModal" class="ghost-button" type="button">Cancelar</button>
+                <button id="confirmActionButton" class="danger-button" type="button">Confirmar</button>
+            </footer>
+        </article>
+    </section>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+/* ─────────────────────────────────────────────────────────
+   Ouro Fino RP – Vampire Status HUD Icon
+   Matches the native HUD circle-icon style (health, armor, etc.)
+   Uses --hud-armor purple as base color for vampire theme.
+   ───────────────────────────────────────────────────────── */
+
+#of-vampire-status {
+    position: fixed;
+    right: 17rem;
+    bottom: 4.1rem;
+    width: 2.75rem;
+    height: 3.45rem;
+    font-family: Rajdhani, Manrope, ui-sans-serif, system-ui, sans-serif;
+    pointer-events: none;
+    z-index: 20;
+    transition: opacity .3s ease, transform .3s ease;
+}
+
+#of-vampire-status[hidden] { display: none; }
+
+/* ── SVG ring container ── */
+#of-vampire-status svg.of-vampire-ring {
+    display: block;
+    width: 2.75rem;
+    height: 2.75rem;
+    transform: rotate(-90deg);
+    filter: drop-shadow(0 0 .35rem rgb(166 111 237 / .45))
+            drop-shadow(.0625rem .0625rem .125rem rgb(0 0 0 / .5));
+    transition: filter .3s ease;
+}
+
+#of-vampire-status.is-active svg.of-vampire-ring {
+    filter: drop-shadow(0 0 .5rem rgb(166 111 237 / .7))
+            drop-shadow(.0625rem .0625rem .125rem rgb(0 0 0 / .5));
+}
+
+/* ── Track (background circle) ── */
+.of-vampire-track {
+    fill: rgba(3, 5, 31, .58);
+    stroke: rgb(166 111 237 / .2);
+    stroke-width: 4;
+}
+
+/* ── Progress arc ── */
+.of-vampire-progress {
+    fill: none;
+    stroke: rgb(166 111 237);
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-dasharray: 113.1;
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset .25s linear, stroke .2s ease;
+}
+
+#of-vampire-status:not(.is-active) .of-vampire-progress {
+    stroke: rgb(116 88 150);
+}
+
+#of-vampire-status.is-recharging .of-vampire-progress {
+    stroke: rgb(166 111 237 / .55);
+}
+
+/* ── Bat icon (centered over circle) ── */
+.of-vampire-icon {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.of-vampire-icon svg {
+    width: 1.22rem;
+    height: 1.22rem;
+    overflow: visible;
+    color: #fff;
+    filter: drop-shadow(.0625rem .0625rem .1rem rgb(0 0 0 / .6));
+    transition: color .3s ease, transform .3s ease;
+}
+
+#of-vampire-status.is-active .of-vampire-icon svg {
+    color: rgb(230 210 255);
+}
+
+#of-vampire-status:not(.is-active) .of-vampire-icon svg {
+    color: rgb(180 170 195);
+}
+
+
+.of-vampire-fangs {
+    fill: currentColor;
+}
+
+.of-vampire-drop {
+    fill: rgb(210 48 72);
+    filter: drop-shadow(0 0 .18rem rgb(210 48 72 / .65));
+}
+
+#of-vampire-status:not(.is-active) .of-vampire-drop {
+    fill: rgb(130 72 90);
+    filter: none;
+}
+
+#of-vampire-status.is-burning .of-vampire-drop {
+    fill: rgb(255 110 90);
+}
+
+/* ── Charge counter (below the circle) ── */
+.of-vampire-count {
+    display: block;
+    margin-top: .08rem;
+    color: #fff;
+    font-size: .74rem;
+    font-weight: 700;
+    line-height: .9rem;
+    text-align: center;
+    text-shadow: .0625rem .0625rem .125rem rgb(0 0 0 / .7);
+}
+
+/* ── Pulse animation when active ── */
+@keyframes of-vampire-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .7; }
+}
+
+#of-vampire-status.is-active.is-burning svg.of-vampire-ring {
+    animation: of-vampire-pulse 1.5s ease-in-out infinite;
+    filter: drop-shadow(0 0 .6rem rgb(220 60 60 / .6))
+            drop-shadow(.0625rem .0625rem .125rem rgb(0 0 0 / .5));
+}
+
+#of-vampire-status.is-active.is-burning .of-vampire-progress {
+    stroke: rgb(220 80 80);
+}
+
+#of-vampire-status.is-active.is-burning .of-vampire-icon svg {
+    color: rgb(255 180 170);
+}
