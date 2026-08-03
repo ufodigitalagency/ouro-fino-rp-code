@@ -4,6 +4,27 @@ local GarbageDuoInvites = {}
 local GarbageDuoInviteByDriver = {}
 local GarbageTrucks = {}
 local GarbageRewardCooldown = {}
+local GarbageRoutes = {}
+local GarbageRouteSequence = 0
+
+local function nextRouteToken(owner, routeIndex)
+    GarbageRouteSequence = GarbageRouteSequence + 1
+    return ("%s:%s:%s"):format(tostring(owner), tostring(routeIndex), GarbageRouteSequence)
+end
+
+local function newRouteState(owner, routeIndex)
+    local totalRoutes = #(Config.Garbage.routePoints or {})
+    local index = math.floor(tonumber(routeIndex) or 1)
+    if index < 1 or index > totalRoutes then
+        index = 1
+    end
+
+    return {
+        routeIndex = index,
+        token = nextRouteToken(owner, index),
+        consuming = false
+    }
+end
 
 local function duoDebug(message)
     if Config.Debug or (Config.GarbageDuo and Config.GarbageDuo.Debug) then
@@ -83,6 +104,21 @@ local function playerSession(source)
     return sessionId and GarbageDuoSessions[sessionId] or nil
 end
 
+local function sendRouteState(source, state)
+    if source and GetPlayerPed(source) ~= 0 and state then
+        TriggerClientEvent("cfWorks:garbageRouteSync", source, state.routeIndex, state.token)
+    end
+end
+
+local function sendSessionRoute(session)
+    if not session or not session.route then
+        return
+    end
+
+    sendRouteState(session.driverSource, session.route)
+    sendRouteState(session.collectorSource, session.route)
+end
+
 local function sendDuoState(session, active, reason)
     local state = {
         active = active,
@@ -91,6 +127,8 @@ local function sendDuoState(session, active, reason)
 
     if active then
         state.vehicleNetId = session.vehicleNetId
+        state.routeIndex = session.route and session.route.routeIndex or 1
+        state.routeToken = session.route and session.route.token or nil
     end
 
     if session.driverSource and GetPlayerPed(session.driverSource) ~= 0 then
@@ -119,6 +157,11 @@ local function cancelDuo(sessionId, reason)
     end
 
     sendDuoState(session, false, reason)
+    if isLixeiro(session.driverSource) then
+        GarbageRoutes[session.driverSource] = newRouteState(session.driverSource, session.route and session.route.routeIndex or 1)
+        sendRouteState(session.driverSource, GarbageRoutes[session.driverSource])
+    end
+    GarbageRoutes[session.collectorSource] = nil
     GarbageDuoSessions[sessionId] = nil
     GarbageDuoByPlayer[session.driverSource] = nil
     GarbageDuoByPlayer[session.collectorSource] = nil
@@ -214,6 +257,7 @@ AddEventHandler("cfWorks:lixeiroTruckReady", function(netId, plate)
         netId = tonumber(netId),
         plate = tostring(plate or "")
     }
+    GarbageRoutes[source] = GarbageRoutes[source] or newRouteState(source, 1)
 
     local passport = vRP.Passport and vRP.Passport(source) or vRP.getUserId(source)
     if passport then
@@ -233,6 +277,7 @@ AddEventHandler("cfWorks:lixeiroTruckGone", function(netId)
 
     if not netId or tonumber(netId) == tonumber(truck.netId) then
         GarbageTrucks[source] = nil
+        GarbageRoutes[source] = nil
         cancelDuoForPlayer(source, "Dupla cancelada porque o caminhao nao foi encontrado.")
     end
 end)
@@ -343,9 +388,14 @@ RegisterCommand(Config.GarbageDuo.AcceptCommand, function(source)
         vehicleNetId = truck.netId,
         plate = truck.plate,
         createdAt = os.time(),
-        separatedSince = nil
+        separatedSince = nil,
+        route = GarbageRoutes[invite.driverSource] or newRouteState(sessionId, 1)
     }
 
+    session.route.token = nextRouteToken(sessionId, session.route.routeIndex)
+    session.route.consuming = false
+    GarbageRoutes[session.driverSource] = nil
+    GarbageRoutes[session.collectorSource] = nil
     GarbageDuoSessions[sessionId] = session
     GarbageDuoByPlayer[session.driverSource] = sessionId
     GarbageDuoByPlayer[session.collectorSource] = sessionId
@@ -369,6 +419,7 @@ AddEventHandler("cfWorks:jobChanged", function(playerSource, jobId)
         clearDriverInvite(playerSource)
         GarbageDuoInvites[playerSource] = nil
         GarbageTrucks[playerSource] = nil
+        GarbageRoutes[playerSource] = nil
     end
 end)
 
@@ -378,6 +429,31 @@ AddEventHandler("cfWorks:playerDropped", function(playerSource)
     GarbageDuoInvites[playerSource] = nil
     GarbageTrucks[playerSource] = nil
     GarbageRewardCooldown[playerSource] = nil
+    GarbageRoutes[playerSource] = nil
+end)
+
+RegisterServerEvent("cfWorks:lixeiroRouteRequest")
+AddEventHandler("cfWorks:lixeiroRouteRequest", function(vehicleNetId)
+    local source = source
+    if not isLixeiro(source) then
+        return
+    end
+
+    local session = playerSession(source)
+    if session then
+        if tonumber(session.vehicleNetId) == tonumber(vehicleNetId) then
+            sendRouteState(source, session.route)
+        end
+        return
+    end
+
+    local truck = validateTruckFor(source, vehicleNetId)
+    if not truck then
+        return
+    end
+
+    GarbageRoutes[source] = GarbageRoutes[source] or newRouteState(source, 1)
+    sendRouteState(source, GarbageRoutes[source])
 end)
 
 CreateThread(function()
@@ -411,7 +487,7 @@ CreateThread(function()
 end)
 
 RegisterServerEvent("cfWorks:lixeiroReward")
-AddEventHandler("cfWorks:lixeiroReward", function(routeIndex, vehicleNetId)
+AddEventHandler("cfWorks:lixeiroReward", function(routeIndex, vehicleNetId, routeToken)
     local source = source
     local user_id = vRP.getUserId(source)
 
@@ -419,44 +495,63 @@ AddEventHandler("cfWorks:lixeiroReward", function(routeIndex, vehicleNetId)
         return
     end
 
-    local routeNumber = tonumber(routeIndex)
+    local session = playerSession(source)
+    local routeState = session and session.route or GarbageRoutes[source]
+    local routeNumber = math.floor(tonumber(routeIndex) or 0)
     local totalRoutes = #(Config.Garbage.routePoints or {})
-    if not routeNumber or routeNumber < 1 or routeNumber > totalRoutes then
+    if not routeState or routeState.consuming or routeNumber < 1 or routeNumber > totalRoutes or routeNumber ~= routeState.routeIndex or type(routeToken) ~= "string" or routeToken ~= routeState.token then
         duoDebug(("pagamento negado: rota invalida source=%s route=%s"):format(source, tostring(routeIndex)))
         return
     end
 
+    routeState.consuming = true
+
+    local function reject(message)
+        routeState.consuming = false
+        if message then
+            duoDebug(message)
+        end
+    end
+
     local routePoint = Config.Garbage.routePoints[routeNumber]
     if distanceBetween(playerCoords(source), routePoint) > 5.0 then
-        duoDebug(("pagamento negado: jogador fora do ponto source=%s route=%s"):format(source, routeNumber))
+        reject(("pagamento negado: jogador fora do ponto source=%s route=%s"):format(source, routeNumber))
         return
     end
 
     local truck, vehicle = validateTruckFor(source, vehicleNetId)
-    local session = playerSession(source)
-    if session and session.collectorSource == source then
+    if session then
         truck, vehicle = validateTruckFor(session.driverSource, vehicleNetId)
     end
 
     if not truck or vehicle == 0 then
-        duoDebug(("pagamento negado: caminhao invalido source=%s netId=%s"):format(source, tostring(vehicleNetId)))
+        reject(("pagamento negado: caminhao invalido source=%s netId=%s"):format(source, tostring(vehicleNetId)))
         TriggerClientEvent("Notify", source, "amarelo", "Caminhao de lixo nao validado pelo servidor.", 5000)
+        return
+    end
+
+    if session then
+        if tonumber(session.vehicleNetId) ~= tonumber(vehicleNetId) or source ~= session.driverSource and source ~= session.collectorSource then
+            reject(("pagamento negado: veiculo ou membro invalido source=%s"):format(source))
+            return
+        end
+
+        local otherSource = source == session.driverSource and session.collectorSource or session.driverSource
+        local vehicleCoords = GetEntityCoords(vehicle)
+        if not isLixeiro(otherSource) or distanceBetween(playerCoords(source), vehicleCoords) > Config.GarbageDuo.TruckDistance or distanceBetween(playerCoords(otherSource), vehicleCoords) > Config.GarbageDuo.TruckDistance or distanceBetween(playerCoords(source), playerCoords(otherSource)) > Config.GarbageDuo.MaxSeparation then
+            reject(("pagamento negado: estado da dupla invalido source=%s"):format(source))
+            return
+        end
+    elseif vRPC and vRPC.LastVehicle and not vRPC.LastVehicle(source, Config.Garbage.model) then
+        reject()
+        TriggerClientEvent("Notify", source, "amarelo", "Voce precisa estar usando o caminhao de lixo.", 5000)
         return
     end
 
     local now = os.time()
     local cooldown = tonumber(Config.GarbageDuo.CollectionCooldown) or 4
     if GarbageRewardCooldown[source] and now - GarbageRewardCooldown[source] < cooldown then
-        return
-    end
-
-    if session and session.collectorSource == source then
-        if tonumber(session.vehicleNetId) ~= tonumber(vehicleNetId) then
-            duoDebug(("pagamento negado: veiculo nao pertence a dupla source=%s"):format(source))
-            return
-        end
-    elseif vRPC and vRPC.LastVehicle and not vRPC.LastVehicle(source, Config.Garbage.model) then
-        TriggerClientEvent("Notify", source, "amarelo", "Voce precisa estar usando o caminhao de lixo.", 5000)
+        reject()
         return
     end
 
@@ -482,5 +577,15 @@ AddEventHandler("cfWorks:lixeiroReward", function(routeIndex, vehicleNetId)
             end
         end
         TriggerClientEvent("Notify", source, "sucesso", "Você coletou itens recicláveis e ganhou <b>XP</b>!")
+        routeState.routeIndex = routeState.routeIndex % totalRoutes + 1
+        routeState.token = nextRouteToken(session and session.id or source, routeState.routeIndex)
+        routeState.consuming = false
+        if session then
+            sendSessionRoute(session)
+        else
+            sendRouteState(source, routeState)
+        end
+    else
+        reject()
     end
 end)

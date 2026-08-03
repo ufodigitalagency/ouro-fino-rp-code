@@ -2,8 +2,12 @@ local garbageVehicle = 0
 local ownsGarbageVehicle = false
 local routeBlip = nil
 local routeIndex = 1
+local routeToken = nil
 local routeActive = false
 local collecting = false
+local awaitingRouteSync = false
+local routeRequestPending = false
+local routeTarget = nil
 local savedClothes = nil
 local uniformApplied = false
 local fixedBlips = {}
@@ -65,6 +69,46 @@ local function updateRouteBlip()
     EndTextCommandSetBlipName(routeBlip)
 end
 
+local function clearRouteTarget()
+    routeTarget = nil
+end
+
+local function resolveRouteTarget(point)
+    if routeTarget and routeTarget.routeIndex == routeIndex then
+        if routeTarget.entity ~= 0 and DoesEntityExist(routeTarget.entity) then
+            routeTarget.coords = GetEntityCoords(routeTarget.entity)
+            return routeTarget.coords
+        end
+        if routeTarget.entity == 0 and GetGameTimer() - routeTarget.checkedAt < 2000 then
+            return routeTarget.coords
+        end
+    end
+
+    local closestEntity = 0
+    local closestCoords = point
+    local closestDistance = 4.01
+    for _, propName in ipairs(Config.Garbage.props or {}) do
+        local entity = GetClosestObjectOfType(point.x, point.y, point.z, 4.0, GetHashKey(propName), false, false, false)
+        if entity and entity ~= 0 and DoesEntityExist(entity) then
+            local entityCoords = GetEntityCoords(entity)
+            local distance = #(entityCoords - point)
+            if distance < closestDistance then
+                closestEntity = entity
+                closestCoords = entityCoords
+                closestDistance = distance
+            end
+        end
+    end
+
+    routeTarget = {
+        routeIndex = routeIndex,
+        entity = closestEntity,
+        coords = closestCoords,
+        checkedAt = GetGameTimer()
+    }
+    return closestCoords
+end
+
 local function debugDuo(message)
     if Config.Debug or (Config.GarbageDuo and Config.GarbageDuo.Debug) then
         print(("[garbage-duo] %s"):format(message))
@@ -87,19 +131,41 @@ local function getDuoVehicle()
     return 0
 end
 
-local function activateRoute()
-    if routeActive then
+local function activateRoute(serverRouteIndex, serverRouteToken)
+    local totalRoutes = #(Config.Garbage.routePoints or {})
+    local validatedIndex = math.floor(tonumber(serverRouteIndex) or 0)
+    if validatedIndex < 1 or validatedIndex > totalRoutes or type(serverRouteToken) ~= "string" or serverRouteToken == "" then
         return
     end
 
-    if #(Config.Garbage.routePoints or {}) <= 0 then
-        return
-    end
-
+    local firstActivation = not routeActive
     routeActive = true
-    routeIndex = 1
+    routeIndex = validatedIndex
+    routeToken = serverRouteToken
+    routeRequestPending = false
+    awaitingRouteSync = false
+    clearRouteTarget()
     updateRouteBlip()
-    notify("verde", "Rota de coleta iniciada. Siga o GPS e saia do caminhao no ponto.", 5000)
+    if firstActivation then
+        notify("verde", "Rota de coleta iniciada. Siga o GPS e saia do caminhao no ponto.", 5000)
+    end
+end
+
+local function requestRouteState()
+    if routeRequestPending then
+        return
+    end
+
+    local vehicle = getDuoVehicle()
+    if vehicle == 0 then
+        return
+    end
+
+    routeRequestPending = true
+    TriggerServerEvent("cfWorks:lixeiroRouteRequest", duoVehicleNetId or NetworkGetNetworkIdFromEntity(vehicle))
+    SetTimeout(3000, function()
+        routeRequestPending = false
+    end)
 end
 
 local function detachRearRide()
@@ -137,6 +203,10 @@ local function clearDuoState()
     if previousRole == "collector" then
         routeActive = false
         routeIndex = 1
+        routeToken = nil
+        routeRequestPending = false
+        awaitingRouteSync = false
+        clearRouteTarget()
         removeRouteBlip()
     end
 
@@ -242,6 +312,10 @@ local function cleanupLixeiro()
     removeRouteBlip()
     routeActive = false
     routeIndex = 1
+    routeToken = nil
+    routeRequestPending = false
+    awaitingRouteSync = false
+    clearRouteTarget()
     collecting = false
     deleteGarbageVehicle()
     clearDuoState()
@@ -356,7 +430,7 @@ local function spawnGarbageTruck()
 end
 
 local function collectAtRoute()
-    if collecting or not routeActive then
+    if collecting or awaitingRouteSync or not routeActive or not routeToken then
         return
     end
 
@@ -366,6 +440,8 @@ local function collectAtRoute()
     end
 
     collecting = true
+    local collectedRoute = routeIndex
+    local collectedToken = routeToken
     local dict, anim = table.unpack(Config.Garbage.anim or { "amb@prop_human_bum_bin@base", "base" })
     RequestAnimDict(dict)
     while not HasAnimDictLoaded(dict) do
@@ -379,13 +455,13 @@ local function collectAtRoute()
 
     if ActiveJob == "lixeiro" and garbageVehicle ~= 0 and DoesEntityExist(garbageVehicle) then
         local networkId = duoVehicleNetId or NetworkGetNetworkIdFromEntity(garbageVehicle)
-        TriggerServerEvent("cfWorks:lixeiroReward", routeIndex, networkId)
-        local points = Config.Garbage.routePoints or {}
-        routeIndex = routeIndex + 1
-        if routeIndex > #points then
-            routeIndex = 1
-        end
-        updateRouteBlip()
+        awaitingRouteSync = true
+        TriggerServerEvent("cfWorks:lixeiroReward", collectedRoute, networkId, collectedToken)
+        SetTimeout(8000, function()
+            if routeToken == collectedToken then
+                awaitingRouteSync = false
+            end
+        end)
     end
 
     collecting = false
@@ -488,17 +564,20 @@ CreateThread(function()
                 end
 
                 if IsPedInVehicle(ped, sharedVehicle, false) then
-                    activateRoute()
+                    if not routeActive then
+                        requestRouteState()
+                    end
                 elseif routeActive then
                     local point = (Config.Garbage.routePoints or {})[routeIndex]
                     if point then
+                        local targetCoords = resolveRouteTarget(point)
                         local coords = GetEntityCoords(ped)
-                        local distance = #(coords - point)
+                        local distance = #(coords - targetCoords)
                         if distance < 20.0 then
                             wait = 0
-                            DrawMarker(1, point.x, point.y, point.z - 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 0.6, 220, 0, 0, 150, false, false, 2, false, nil, nil, false)
+                            DrawMarker(1, targetCoords.x, targetCoords.y, targetCoords.z - 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 0.6, 220, 0, 0, 150, false, false, 2, false, nil, nil, false)
                             if distance < 2.0 then
-                                drawText3D(point.x, point.y, point.z + 0.5, "~r~[E]~w~ COLETAR LIXO")
+                                drawText3D(targetCoords.x, targetCoords.y, targetCoords.z + 0.5, "~r~[E]~w~ COLETAR LIXO")
                                 if IsControlJustPressed(0, 38) then
                                     collectAtRoute()
                                 end
@@ -511,6 +590,11 @@ CreateThread(function()
 
         Wait(wait)
     end
+end)
+
+RegisterNetEvent("cfWorks:garbageRouteSync")
+AddEventHandler("cfWorks:garbageRouteSync", function(serverRouteIndex, serverRouteToken)
+    activateRoute(serverRouteIndex, serverRouteToken)
 end)
 
 RegisterNetEvent("cfWorks:garbageDuoInvite")
@@ -531,11 +615,11 @@ AddEventHandler("cfWorks:garbageDuoState", function(state)
     duoActive = true
     duoRole = state.role
     duoVehicleNetId = tonumber(state.vehicleNetId)
+    activateRoute(state.routeIndex, state.routeToken)
 
     if duoRole == "collector" then
         ownsGarbageVehicle = false
         garbageVehicle = 0
-        activateRoute()
     elseif garbageVehicle ~= 0 and DoesEntityExist(garbageVehicle) then
         ownsGarbageVehicle = true
     end
