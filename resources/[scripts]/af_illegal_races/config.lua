@@ -81,6 +81,21 @@ Config.Ranking = {
 	CacheSeconds = 5
 }
 
+local NpcRaceDrivingFlags = {
+	SwerveAroundAllVehicles = 4,
+	SteerAroundStationaryVehicles = 8,
+	SteerAroundPeds = 16,
+	SteerAroundObjects = 32,
+	DriveIntoOncomingTraffic = 512,
+	UseShortCutLinks = 262144,
+	ChangeLanesAroundObstructions = 524288
+}
+
+local NpcRaceDrivingStyle = 0
+for _,Flag in pairs(NpcRaceDrivingFlags) do
+	NpcRaceDrivingStyle = NpcRaceDrivingStyle + Flag
+end
+
 Config.NpcRace = {
 	Enabled = true,
 	Stake = 200,
@@ -95,10 +110,10 @@ Config.NpcRace = {
 		Normal = { Speed = 39.0, Ability = 0.90, Aggressiveness = 0.85 },
 		Hard = { Speed = 46.0, Ability = 1.00, Aggressiveness = 1.00 }
 	},
-	-- StopForVehicles(1), StopForPeds(2), SwerveAroundVehicles(4), SteerAroundStationaryVehicles(8),
-	-- SteerAroundPeds(16), SteerAroundObjects(32), UseShortCutLinks(262144) e ChangeLanesAroundObstructions(524288).
-	-- A flag StopAtTrafficLights(128) foi removida: o piloto ignora o sinal, mas continua usando a malha viaria.
-	DrivingStyle = 786495,
+	-- StopForVehicles(1), StopForPeds(2) e StopAtTrafficLights(128) ficam deliberadamente ausentes.
+	-- O valor final e composto pelas flags nomeadas acima, sem depender de um numero magico.
+	DrivingFlags = NpcRaceDrivingFlags,
+	DrivingStyle = NpcRaceDrivingStyle,
 	CleanupDrivingStyle = 786603,
 	StopRange = 8.0,
 	TaskRefreshInterval = 12000,

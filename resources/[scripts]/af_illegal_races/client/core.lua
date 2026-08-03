@@ -353,15 +353,17 @@ local function MaintainCountdownLock(Vehicle,IsNpc)
 
 	RequestControl(Vehicle,100)
 	SetVehicleEngineOn(Vehicle,true,true,false)
-	SetVehicleHandbrake(Vehicle,true)
-	SetVehicleBrake(Vehicle,true)
 
 	local Settings = Config.CountdownLock or {}
 	local Throttle = 0.0
-	if not IsNpc and GetPedInVehicleSeat(Vehicle,-1) == PlayerPedId() then
+	local LocalDriver = not IsNpc and GetPedInVehicleSeat(Vehicle,-1) == PlayerPedId()
+	if LocalDriver then
 		Throttle = math.max(0.0,GetControlNormal(0,71),GetDisabledControlNormal(0,71))
 	end
-	SetVehicleBurnout(Vehicle,not IsNpc and Throttle > 0.15)
+	local BurnoutActive = LocalDriver and Throttle > 0.15
+	SetVehicleBurnout(Vehicle,BurnoutActive)
+	SetVehicleHandbrake(Vehicle,not BurnoutActive)
+	SetVehicleBrake(Vehicle,not BurnoutActive)
 
 	local MaximumSpeed = math.max(0.05,tonumber(Settings.MaximumSpeed) or 0.35)
 	if GetEntitySpeed(Vehicle) > MaximumSpeed then
@@ -369,8 +371,12 @@ local function MaintainCountdownLock(Vehicle,IsNpc)
 	end
 
 	local CurrentCoords = GetEntityCoords(Vehicle)
-	if #(CurrentCoords - Lock.Coords) > math.max(0.1,tonumber(Settings.MaximumPositionDrift) or 0.65) then
+	local PositionDrift = #(CurrentCoords - Lock.Coords)
+	local HeadingDrift = math.abs(((GetEntityHeading(Vehicle) - Lock.Heading + 180.0) % 360.0) - 180.0)
+	if PositionDrift > math.max(0.1,tonumber(Settings.MaximumPositionDrift) or 0.65) then
 		SetEntityCoordsNoOffset(Vehicle,Lock.Coords.x,Lock.Coords.y,Lock.Coords.z,false,false,false)
+	end
+	if HeadingDrift > 3.0 then
 		SetEntityHeading(Vehicle,Lock.Heading)
 	end
 
@@ -1109,10 +1115,21 @@ CreateThread(function()
 
 			if CurrentRace.Status == "countdown" then
 				DisableControlAction(0,75,true)
+				DisableControlAction(0,72,true)
+				DisableControlAction(0,76,true)
 				if Config.CountdownLock and Config.CountdownLock.LockSteering ~= false then
 					DisableControlAction(0,59,true)
 				end
-				MaintainCountdownLock(Vehicle,false)
+				local PlayerPed = PlayerPedId()
+				local IsActiveDriver = Vehicle ~= 0 and DoesEntityExist(Vehicle) and GetPedInVehicleSeat(Vehicle,-1) == PlayerPed and not IsPedDeadOrDying(PlayerPed,true) and GetEntityHealth(PlayerPed) > 100
+				if IsActiveDriver then
+					if not CountdownLocks[Vehicle] then
+						SetVehicleHeld(Vehicle,true)
+					end
+					MaintainCountdownLock(Vehicle,false)
+				else
+					SetVehicleHeld(Vehicle,false)
+				end
 				if CurrentRace.Mode == "npc" then
 					local _,NpcVehicle = NpcEntities()
 					MaintainCountdownLock(NpcVehicle,true)
