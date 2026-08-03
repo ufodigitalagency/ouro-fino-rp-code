@@ -353,6 +353,117 @@ function Lil.Revive(Health,Arena)
 	exports.survival:Revive(Health,Arena)
 end
 -----------------------------------------------------------------------------------------------------------------------------------------
+-- CANONICALRECOVERY
+-----------------------------------------------------------------------------------------------------------------------------------------
+function Lil.CanonicalRecovery(Health,Armour)
+	local Ped = PlayerPedId()
+	local Preserved = {}
+	local Protected = {
+		{ State = "Handcuff", Label = "algema" },
+		{ State = "Carry", Label = "transporte" },
+		{ State = "Commands", Label = "comandos bloqueados" },
+		{ State = "Buttons", Label = "botoes bloqueados" },
+		{ State = "Cancel", Label = "acao em andamento" }
+	}
+
+	for _,Data in ipairs(Protected) do
+		if LocalPlayer.state[Data.State] then
+			Preserved[#Preserved + 1] = Data.Label
+		end
+	end
+
+	if IsEntityAttached(Ped) then
+		Preserved[#Preserved + 1] = "anexo"
+	end
+
+	if not IsEntityVisible(Ped) then
+		Preserved[#Preserved + 1] = "visibilidade"
+	end
+
+	if GetEntityAlpha(Ped) < 255 then
+		Preserved[#Preserved + 1] = "transparencia"
+	end
+
+	if GetEntityCollisionDisabled(Ped) then
+		Preserved[#Preserved + 1] = "colisao"
+	end
+
+	if IsEntityPositionFrozen(Ped) then
+		Preserved[#Preserved + 1] = "posicao congelada"
+	end
+
+	local WasDeath = Death.Status or LocalPlayer.state.Death == true
+	local WasCrawl = Crawl.Status or Crawl.Timer > 0 or LocalPlayer.state.Crawl == true
+	local WasIncapacitated = WasDeath or WasCrawl or GetEntityHealth(Ped) <= 100
+	local FinalHealth = math.max(tonumber(Health) or 200,101)
+	local NormalReviveUsed = false
+
+	if not WasIncapacitated and GetPlayerInvincible(PlayerId()) then
+		Preserved[#Preserved + 1] = "invencibilidade"
+	end
+
+	if WasIncapacitated and #Preserved == 0 then
+		exports.survival:Revive(FinalHealth)
+		NormalReviveUsed = true
+	end
+
+	if LocalPlayer.state.Death then
+		LocalPlayer.state:set("Death",false,true)
+	end
+
+	if LocalPlayer.state.Crawl then
+		LocalPlayer.state:set("Crawl",false,true)
+	end
+
+	Death.Status = false
+	Death.Timer = 0
+	Death.Pressed = 0
+	Death.Cooldown = GetGameTimer()
+
+	Crawl.Status = false
+	Crawl.Timer = 0
+	Crawl.Stand = GetGameTimer()
+	Crawl.Cooldown = GetGameTimer()
+
+	SetEntityHealth(Ped,math.min(FinalHealth,GetEntityMaxHealth(Ped)))
+	SetPedArmour(Ped,math.max(tonumber(Armour) or 100,0))
+	ClearPedBloodDamage(Ped)
+
+	if #Preserved == 0 then
+		ClearPedTasksImmediately(Ped)
+		ResetPedMovementClipset(Ped,0.25)
+		ResetPedStrafeClipset(Ped)
+		ResetPedWeaponMovementClipset(Ped)
+		ResetPedRagdollTimer(Ped)
+		SetPedCanRagdoll(Ped,true)
+	end
+
+	if WasIncapacitated then
+		SetEntityInvincible(Ped,false)
+		SetPedRelationshipGroupHash(Ped,1862763509)
+		SetLocalPlayerAsGhost(false)
+		ClearFacialIdleAnimOverride(Ped)
+		NetworkSetFriendlyFireOption(true)
+
+		TriggerEvent("paramedic:Reset")
+		TriggerEvent("hud:Active",true)
+		exports["pma-voice"]:Mute(false)
+		SendNUIMessage({ Action = "Close" })
+		exports["lb-phone"]:ToggleDisabled(false)
+	end
+
+	return {
+		success = true,
+		partial = #Preserved > 0,
+		preserved = Preserved,
+		wasDeath = WasDeath,
+		wasCrawl = WasCrawl,
+		normalReviveUsed = NormalReviveUsed,
+		health = GetEntityHealth(Ped),
+		armour = GetPedArmour(Ped)
+	}
+end
+-----------------------------------------------------------------------------------------------------------------------------------------
 -- LOGIN
 -----------------------------------------------------------------------------------------------------------------------------------------
 exports("Login",function()

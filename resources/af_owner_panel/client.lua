@@ -137,12 +137,6 @@ RegisterNetEvent("af_owner_panel:runClientAction",function(action)
         end
 
         setPanel(true)
-    elseif action == "god" then
-        local ped = PlayerPedId()
-        SetEntityHealth(ped,GetEntityMaxHealth(ped))
-        SetPedArmour(ped,100)
-        ClearPedBloodDamage(ped)
-        notify("Vida/colete restaurados.")
     elseif action == "noclip" then
         toggleNoclip()
     elseif action == "tpway" then
@@ -227,7 +221,14 @@ RegisterNUICallback("close",function(_,cb)
 end)
 
 RegisterNUICallback("clientAction",function(data,cb)
-    TriggerServerEvent("af_owner_panel:clientAction",data and data.action)
+    local action = data and data.action
+
+    if action == "god" then
+        TriggerServerEvent("af_owner_panel:requestPanelSelfRecovery")
+    else
+        TriggerServerEvent("af_owner_panel:clientAction",action)
+    end
+
     cb(true)
 end)
 
@@ -294,6 +295,31 @@ end)
 RegisterCommand("ofadminclose",function()
     hardClose()
 end,false)
+
+RegisterCommand("ofrecover",function(_,args)
+    if type(args) == "table" and #args > 0 then
+        notify("O comando ofrecover nao aceita argumentos.")
+        return
+    end
+
+    TriggerServerEvent("af_owner_panel:requestEmergencySelfRecovery")
+end,false)
+
+RegisterNetEvent("af_owner_panel:selfRecoveryResult",function(data)
+    if type(data) ~= "table" then
+        notify("Resposta invalida da recuperacao.")
+        return
+    end
+
+    if data.success == true and data.result == "partial" then
+        local preserved = type(data.preserved) == "table" and table.concat(data.preserved,", ") or "restricoes institucionais"
+        notify("Recuperacao concluida parcialmente. Preservado: "..preserved..".")
+    elseif data.success == true then
+        notify("Recuperacao concluida com seguranca.")
+    else
+        notify(tostring(data.message or "Recuperacao negada pelo servidor."))
+    end
+end)
 
 RegisterNetEvent("af_owner_panel:close",function()
     hardClose()

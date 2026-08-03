@@ -2,8 +2,11 @@ local Tunnel = module("vrp","lib/Tunnel")
 local Proxy = module("vrp","lib/Proxy")
 local vRP = Proxy.getInterface("vRP")
 local vKEYBOARD = Tunnel.getInterface("keyboard")
+local vSURVIVAL = Tunnel.getInterface("survival")
 
 local OWNER_PASSPORT = 1
+local OWNER_RECOVERY_COOLDOWN = 4000
+local OwnerRecoveryCooldowns = {}
 
 local OwnerJobs = {
     { id = "LSPD", label = "Polícia - LSPD" },
@@ -136,6 +139,129 @@ end
 local function isOwner(source)
     local passport = vRP.Passport(source)
     return passport and tonumber(passport) == OWNER_PASSPORT
+end
+
+local function ownerRecoveryLog(source,passport,origin,before,result,reason)
+    before = before or {}
+
+    print(("[af_owner_panel] owner_recovery timestamp=%s source=%s passport=%s origin=%s before_death=%s before_crawl=%s before_health=%s result=%s reason=%s"):format(
+        os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        tostring(source or "unknown"),
+        tostring(passport or "unknown"),
+        tostring(origin or "unknown"),
+        tostring(before.Death == true),
+        tostring(before.Crawl == true),
+        tostring(before.Health or "unknown"),
+        tostring(result or "denied"),
+        tostring(reason or "none")
+    ))
+end
+
+local function ownerRecoveryResponse(source,success,result,message,preserved)
+    TriggerClientEvent("af_owner_panel:selfRecoveryResult",source,{
+        success = success == true,
+        result = result,
+        message = message,
+        preserved = preserved or {}
+    })
+end
+
+local function requestOwnerRecovery(requestSource,origin)
+    local source = tonumber(requestSource)
+    origin = tostring(origin or "unknown")
+
+    if not source or source <= 0 then
+        ownerRecoveryLog(source,nil,origin,nil,"denied","invalid_source")
+        return false
+    end
+
+    local now = GetGameTimer()
+    if OwnerRecoveryCooldowns[source] and now < OwnerRecoveryCooldowns[source] then
+        local passport = vRP.Passport(source)
+        local state = Player(source) and Player(source).state
+        local before = state and {
+            Death = state.Death,
+            Crawl = state.Crawl,
+            Health = vRP.GetHealth(source)
+        } or nil
+
+        ownerRecoveryLog(source,passport,origin,before,"denied","cooldown")
+        ownerRecoveryResponse(source,false,"denied","Aguarde alguns segundos antes de tentar novamente.")
+        return false
+    end
+
+    OwnerRecoveryCooldowns[source] = now + OWNER_RECOVERY_COOLDOWN
+
+    local passport = vRP.Passport(source)
+    local player = Player(source)
+    local state = player and player.state
+    local before = state and {
+        Death = state.Death,
+        Crawl = state.Crawl,
+        Health = vRP.GetHealth(source)
+    } or nil
+
+    local function deny(reason,message)
+        ownerRecoveryLog(source,passport,origin,before,"denied",reason)
+        ownerRecoveryResponse(source,false,"denied",message)
+        return false
+    end
+
+    if not passport or not isOwner(source) then
+        return deny("not_owner","Recuperacao permitida exclusivamente ao dono ID 1.")
+    end
+
+    if not state or state.Active ~= true or not vRP.DoesEntityExist(source) then
+        return deny("inactive_character","Finalize a selecao e aguarde o personagem ficar ativo.")
+    end
+
+    if state.Banned == true then
+        return deny("banned_context","Recuperacao indisponivel neste contexto.")
+    end
+
+    if state.Prison == true or tonumber(state.Prison or 0) > 0 then
+        return deny("prison_context","Recuperacao indisponivel durante a prisao.")
+    end
+
+    if state.Creation == true then
+        return deny("creation_context","Recuperacao indisponivel durante a criacao do personagem.")
+    end
+
+    if state.Bed == true then
+        return deny("bed_context","Saia da cama antes de solicitar a recuperacao.")
+    end
+
+    if state.Arena == true or tonumber(state.Arena or 0) > 0 then
+        return deny("arena_context","Recuperacao indisponivel durante uma arena.")
+    end
+
+    local route = tonumber(state.Route or 0) or 0
+    local bucket = GetPlayerRoutingBucket(source)
+    if route ~= 0 or bucket ~= 0 then
+        return deny("routing_bucket_context","Recuperacao indisponivel fora da rota principal.")
+    end
+
+    TriggerClientEvent("af_owner_panel:close",source)
+
+    local ok,recovery = pcall(function()
+        return vSURVIVAL.CanonicalRecovery(source,200,100)
+    end)
+
+    if not ok or type(recovery) ~= "table" or recovery.success ~= true then
+        local reason = not ok and "survival_tunnel_error" or "invalid_survival_result"
+        ownerRecoveryLog(source,passport,origin,before,"failed",reason)
+        ownerRecoveryResponse(source,false,"failed","A recuperacao nao foi concluida com seguranca.")
+        return false
+    end
+
+    state.Death = false
+    state.Crawl = false
+
+    local result = recovery.partial and "partial" or "success"
+    local reason = recovery.partial and "protected_restrictions_preserved" or "canonical_recovery_complete"
+    ownerRecoveryLog(source,passport,origin,before,result,reason)
+    ownerRecoveryResponse(source,true,result,nil,recovery.preserved)
+    return true
 end
 
 local function getSourceFromPassport(passport)
@@ -841,6 +967,15 @@ end
 
 RegisterNetEvent("af_owner_panel:dynamicAction",function(action)
     local source = source
+    action = tostring(action or "")
+
+    if action == "god" then
+        if requestOwnerRecovery(source,"owner_panel") then
+            TriggerClientEvent("dynamic:Close",source)
+        end
+        return
+    end
+
     if not isOwner(source) then
         return
     end
@@ -848,9 +983,7 @@ RegisterNetEvent("af_owner_panel:dynamicAction",function(action)
     TriggerClientEvent("dynamic:Close",source)
     Wait(100)
 
-    action = tostring(action or "")
-
-    if action == "openPanel" or action == "god" or action == "noclip" or action == "tpway" or action == "dogcds" or action == "blipsreload" or action == "itemCatalog" or action == "giveItem" or action == "telaoEdit" or action == "telaoSave" then
+    if action == "openPanel" or action == "noclip" or action == "tpway" or action == "dogcds" or action == "blipsreload" or action == "itemCatalog" or action == "giveItem" or action == "telaoEdit" or action == "telaoSave" then
         TriggerClientEvent("af_owner_panel:runClientAction",source,action)
         return
     end
@@ -1130,11 +1263,25 @@ end)
 
 RegisterNetEvent("af_owner_panel:clientAction",function(action)
     local source = source
+
+    if tostring(action or "") == "god" then
+        requestOwnerRecovery(source,"owner_panel")
+        return
+    end
+
     if not isOwner(source) then
         return
     end
 
     TriggerClientEvent("af_owner_panel:runClientAction",source,tostring(action or ""))
+end)
+
+RegisterNetEvent("af_owner_panel:requestPanelSelfRecovery",function()
+    requestOwnerRecovery(source,"owner_panel")
+end)
+
+RegisterNetEvent("af_owner_panel:requestEmergencySelfRecovery",function()
+    requestOwnerRecovery(source,"ofrecover")
 end)
 
 RegisterNetEvent("af_owner_panel:requestCatalog",function()
@@ -1679,4 +1826,5 @@ end)
 
 AddEventHandler("playerDropped",function()
     EconomyCooldowns[source] = nil
+    OwnerRecoveryCooldowns[source] = nil
 end)
