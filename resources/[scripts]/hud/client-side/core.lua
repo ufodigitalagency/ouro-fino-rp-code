@@ -26,6 +26,20 @@ local Road = "Roads"
 local Underwater = false
 local Crossing = "Crossing"
 
+local function RemoveHood()
+	if not Hood then
+		return false
+	end
+
+	DoScreenFadeIn(2500)
+	Hood = false
+	return true
+end
+
+function Lil.RemoveHood()
+	return RemoveHood()
+end
+
 local MinasLocations = {
 	{ Name = "Ouro Fino", X = 215.0, Y = -920.0, Radius = 900.0, Roads = { "Centro", "Praca Matriz", "Rua Treze de Maio", "Avenida Cyro Goncalves" } },
 	{ Name = "Ouro Verde", X = -520.0, Y = -1150.0, Radius = 850.0, Roads = { "Jardim Ouro Verde", "Rua das Palmeiras", "Avenida Minas Gerais" } },
@@ -514,8 +528,7 @@ end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterNetEvent("hud:Hood",function()
 	if Hood then
-		DoScreenFadeIn(2500)
-		Hood = false
+		RemoveHood()
 	else
 		DoScreenFadeOut(0)
 		Hood = true

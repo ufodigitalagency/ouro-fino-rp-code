@@ -11,6 +11,29 @@ vRP = Proxy.getInterface("vRP")
 vCLIENT = Tunnel.getInterface("player")
 vSKINSHOP = Tunnel.getInterface("skinshop")
 vKEYBOARD = Tunnel.getInterface("keyboard")
+
+local function ownerProtectionDenied(executorSource,targetSource,action)
+	if GetResourceState("af_owner_panel") ~= "started" then
+		return false
+	end
+
+	local ok,protected = pcall(function()
+		return exports.af_owner_panel:IsOwnerProtected(targetSource)
+	end)
+	if not ok or protected ~= true then
+		return false
+	end
+
+	local reported,result = pcall(function()
+		return exports.af_owner_panel:ReportProtectionBlock(executorSource,targetSource,action)
+	end)
+	if not reported or result ~= true then
+		TriggerClientEvent("Notify",executorSource,"Protecao","O Dono esta com protecao preventiva ativa.","vermelho",5000)
+		TriggerClientEvent("Notify",targetSource,"Protecao","Uma restricao hostil foi bloqueada.","amarelo",5000)
+		print(("[player] owner_protection_fallback timestamp=%s executor=%s target=%s action=%s"):format(os.date("!%Y-%m-%dT%H:%M:%SZ"),tostring(executorSource),tostring(targetSource),tostring(action)))
+	end
+	return true
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PLAYER:SURVIVAL
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -154,7 +177,12 @@ AddEventHandler("player:cvFunctions",function(Mode)
 	local source = source
 	local Passport = vRP.Passport(source)
 	local OtherSource = vRPC.ClosestPed(source,Distance)
-	if Passport and OtherSource then
+	local OtherPassport = OtherSource and vRP.Passport(OtherSource) or nil
+	if Passport and OtherPassport and vRP.DoesEntityExist(source) and vRP.DoesEntityExist(OtherSource) then
+		if #(vRP.GetEntityCoords(source) - vRP.GetEntityCoords(OtherSource)) > (Distance + 0.5) then
+			return false
+		end
+
 		if vRP.HasService(Passport,"Emergencia") or vRP.ConsultItem(Passport,"rope",1) then
 			local Vehicle,Network = vRPC.VehicleList(source)
 			if Vehicle then
@@ -163,6 +191,10 @@ AddEventHandler("player:cvFunctions",function(Mode)
 					if Mode == "rv" then
 						vCLIENT.RemoveVehicle(OtherSource)
 					elseif Mode == "cv" then
+						if ownerProtectionDenied(source,OtherSource,"force_vehicle") then
+							return false
+						end
+
 						vCLIENT.PlaceVehicle(OtherSource,Network)
 						TriggerEvent("inventory:CarryDetach",source,Passport)
 					end

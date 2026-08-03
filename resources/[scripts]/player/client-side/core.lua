@@ -473,6 +473,28 @@ AddEventHandler("player:checkTrash",function()
 	end
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
+-- OWNERFORCERELEASE
+-----------------------------------------------------------------------------------------------------------------------------------------
+function Lil.OwnerForceRelease()
+	local WasTrunked = Trunked ~= false
+	local WasTrashed = Trashed ~= false
+
+	if WasTrunked then
+		TriggerEvent("player:checkTrunk")
+	end
+
+	if WasTrashed then
+		TriggerEvent("player:checkTrash")
+	end
+
+	return {
+		success = true,
+		trunk = WasTrunked,
+		trash = WasTrashed,
+		commandsOwned = WasTrunked or WasTrashed
+	}
+end
+-----------------------------------------------------------------------------------------------------------------------------------------
 -- ANCHOR
 -----------------------------------------------------------------------------------------------------------------------------------------
 AddEventHandler("player:Anchor",function(Vehicle)

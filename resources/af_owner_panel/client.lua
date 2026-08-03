@@ -305,6 +305,24 @@ RegisterCommand("ofrecover",function(_,args)
     TriggerServerEvent("af_owner_panel:requestEmergencySelfRecovery")
 end,false)
 
+RegisterCommand("ofprotection",function(_,args)
+    if type(args) == "table" and #args > 0 then
+        notify("O comando ofprotection nao aceita argumentos.")
+        return
+    end
+
+    TriggerServerEvent("af_owner_panel:requestProtectionToggle")
+end,false)
+
+RegisterCommand("ofrelease",function(_,args)
+    if type(args) == "table" and #args > 0 then
+        notify("O comando ofrelease nao aceita argumentos.")
+        return
+    end
+
+    TriggerServerEvent("af_owner_panel:requestSelfRelease")
+end,false)
+
 RegisterNetEvent("af_owner_panel:selfRecoveryResult",function(data)
     if type(data) ~= "table" then
         notify("Resposta invalida da recuperacao.")
@@ -318,6 +336,37 @@ RegisterNetEvent("af_owner_panel:selfRecoveryResult",function(data)
         notify("Recuperacao concluida com seguranca.")
     else
         notify(tostring(data.message or "Recuperacao negada pelo servidor."))
+    end
+end)
+
+RegisterNetEvent("af_owner_panel:protectionResult",function(data)
+    if type(data) ~= "table" then
+        notify("Resposta invalida da protecao preventiva.")
+        return
+    end
+
+    notify(tostring(data.message or (data.enabled == true and "Protecao preventiva ativada." or "Protecao preventiva desativada.")))
+end)
+
+RegisterNetEvent("af_owner_panel:releaseResult",function(data)
+    if type(data) ~= "table" then
+        notify("Resposta invalida da libertacao emergencial.")
+        return
+    end
+
+    if data.success ~= true then
+        notify(tostring(data.message or "Libertacao negada pelo servidor."))
+        return
+    end
+
+    local released = type(data.released) == "table" and table.concat(data.released,", ") or ""
+    local preserved = type(data.preserved) == "table" and table.concat(data.preserved,", ") or ""
+    if data.result == "partial" then
+        notify("Libertacao parcial. Liberado: "..(released ~= "" and released or "nenhum")..". Preservado: "..(preserved ~= "" and preserved or "contexto legitimo")..".")
+    elseif released ~= "" then
+        notify("Libertacao concluida: "..released..".")
+    else
+        notify(tostring(data.message or "Nenhuma restricao proprietaria estava ativa."))
     end
 end)
 

@@ -1,6 +1,43 @@
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- USE
 -----------------------------------------------------------------------------------------------------------------------------------------
+local function ownerProtectionDenied(executorSource,targetSource,action)
+	if GetResourceState("af_owner_panel") ~= "started" then
+		return false
+	end
+
+	local ok,protected = pcall(function()
+		return exports.af_owner_panel:IsOwnerProtected(targetSource)
+	end)
+	if not ok or protected ~= true then
+		return false
+	end
+
+	local reported,result = pcall(function()
+		return exports.af_owner_panel:ReportProtectionBlock(executorSource,targetSource,action)
+	end)
+	if not reported or result ~= true then
+		TriggerClientEvent("Notify",executorSource,"Protecao","O Dono esta com protecao preventiva ativa.","vermelho",5000)
+		TriggerClientEvent("Notify",targetSource,"Protecao","Uma restricao hostil foi bloqueada.","amarelo",5000)
+		print(("[inventory] owner_protection_fallback timestamp=%s executor=%s target=%s action=%s"):format(os.date("!%Y-%m-%dT%H:%M:%SZ"),tostring(executorSource),tostring(targetSource),tostring(action)))
+	end
+	return true
+end
+
+local function validRestrictionTarget(executorSource,targetSource,maxDistance)
+	executorSource = tonumber(executorSource)
+	targetSource = tonumber(targetSource)
+	if not executorSource or executorSource <= 0 or not targetSource or targetSource <= 0 or executorSource == targetSource then
+		return false
+	end
+
+	if not vRP.Passport(executorSource) or not vRP.Passport(targetSource) or not vRP.DoesEntityExist(executorSource) or not vRP.DoesEntityExist(targetSource) then
+		return false
+	end
+
+	return #(vRP.GetEntityCoords(executorSource) - vRP.GetEntityCoords(targetSource)) <= (tonumber(maxDistance) or 2.0)
+end
+
 Use = {
 	["cellphone"] = function(source,Passport,Amount,Slot,Full,Item,Split)
 		TriggerClientEvent("inventory:Close",source)
@@ -3474,13 +3511,18 @@ Use = {
 	["handcuff"] = function(source,Passport,Amount,Slot,Full,Item,Split)
 		if not vRP.InsideVehicle(source) then
 			local ClosestPed = vRPC.ClosestPed(source)
-			if ClosestPed and not vRP.IsEntityVisible(ClosestPed) then
+			if ClosestPed and validRestrictionTarget(source,ClosestPed,2.0) and not vRP.IsEntityVisible(ClosestPed) then
+				local ClosestState = Player(ClosestPed).state
+				if not ClosestState.Handcuff and ownerProtectionDenied(source,ClosestPed,"handcuff") then
+					return false
+				end
+
 				Player(source).state.Cancel = true
 				Player(source).state.Buttons = true
 
-				if Player(ClosestPed).state.Handcuff then
-					Player(ClosestPed).state.Handcuff = false
-					Player(ClosestPed).state.Commands = false
+				if ClosestState.Handcuff then
+					ClosestState.Handcuff = false
+					ClosestState.Commands = false
 					TriggerClientEvent("sounds:Private",source,"uncuff",0.5)
 					TriggerClientEvent("sounds:Private",ClosestPed,"uncuff",0.5)
 
@@ -3505,8 +3547,8 @@ Use = {
 						TriggerClientEvent("sounds:Private",ClosestPed,"cuff",0.5)
 					end
 
-					Player(ClosestPed).state.Handcuff = true
-					Player(ClosestPed).state.Commands = true
+					ClosestState.Handcuff = true
+					ClosestState.Commands = true
 					TriggerClientEvent("inventory:Close",ClosestPed)
 					TriggerClientEvent("radio:Disconnect",ClosestPed)
 				end
@@ -3519,7 +3561,11 @@ Use = {
 
 	["hood"] = function(source,Passport,Amount,Slot,Full,Item,Split)
 		local OtherSource = vRPC.ClosestPed(source)
-		if OtherSource and Player(OtherSource).state.Handcuff then
+		if OtherSource and validRestrictionTarget(source,OtherSource,2.0) and Player(OtherSource).state.Handcuff then
+			if ownerProtectionDenied(source,OtherSource,"hood") then
+				return false
+			end
+
 			TriggerClientEvent("hud:Hood",OtherSource)
 			TriggerClientEvent("inventory:Close",OtherSource)
 		end
@@ -3530,20 +3576,15 @@ Use = {
 			if not Carry[Passport] then
 				local OtherSource = vRPC.ClosestPed(source)
 				local OtherPassport = vRP.Passport(OtherSource)
-				if OtherSource and not Carry[OtherPassport] and vRP.GetHealth(OtherSource) <= 100 and not vRP.IsEntityVisible(OtherSource) then
-					Carry[Passport] = OtherSource
-					Player(source).state.Carry = true
-					Player(OtherSource).state.Carry = true
-					TriggerClientEvent("inventory:Carry",OtherSource,source,"Attach")
+				if OtherSource and validRestrictionTarget(source,OtherSource,2.0) and OtherPassport and not Carry[OtherPassport] and vRP.GetHealth(OtherSource) <= 100 and not vRP.IsEntityVisible(OtherSource) then
+					if ownerProtectionDenied(source,OtherSource,"carry") then
+						return false
+					end
+
+					TriggerEvent("inventory:ServerCarry",source,Passport,OtherSource,false)
 				end
 			else
-				if vRP.DoesEntityExist(Carry[Passport]) then
-					TriggerClientEvent("inventory:Carry",Carry[Passport],source,"Detach")
-					Player(Carry[Passport]).state.Carry = false
-				end
-
-				Player(source).state.Carry = false
-				Carry[Passport] = nil
+				TriggerEvent("inventory:ServerCarry",source,Passport)
 			end
 		end
 	end,

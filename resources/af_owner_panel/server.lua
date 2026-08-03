@@ -3,10 +3,31 @@ local Proxy = module("vrp","lib/Proxy")
 local vRP = Proxy.getInterface("vRP")
 local vKEYBOARD = Tunnel.getInterface("keyboard")
 local vSURVIVAL = Tunnel.getInterface("survival")
+local vHUD = Tunnel.getInterface("hud")
+local vPLAYER = Tunnel.getInterface("player")
 
 local OWNER_PASSPORT = 1
 local OWNER_RECOVERY_COOLDOWN = 4000
+local OWNER_PROTECTION_COOLDOWN = 4000
+local OWNER_RELEASE_COOLDOWN = 4000
 local OwnerRecoveryCooldowns = {}
+local OwnerProtectionCooldowns = {}
+local OwnerReleaseCooldowns = {}
+local OwnerProtectionBlockCooldowns = {}
+local OwnerPendingCommandRelease = {}
+local OwnerProtectionEnabled = true
+
+local OwnerProtectionConsumers = {
+    inventory = true,
+    inspect = true,
+    player = true
+}
+
+local OwnerProtectionActions = {
+    inventory = { handcuff = true, hood = true, carry = true },
+    inspect = { inspect = true },
+    player = { force_vehicle = true }
+}
 
 local OwnerJobs = {
     { id = "LSPD", label = "Polícia - LSPD" },
@@ -139,6 +160,316 @@ end
 local function isOwner(source)
     local passport = vRP.Passport(source)
     return passport and tonumber(passport) == OWNER_PASSPORT
+end
+
+local function ownerProtectionLog(source,passport,action,result,reason,before,after,released,preserved)
+    print(("[af_owner_panel] owner_protection timestamp=%s source=%s passport=%s action=%s result=%s reason=%s before=%s after=%s released=%s preserved=%s"):format(
+        os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        tostring(source or "unknown"),
+        tostring(passport or "unknown"),
+        tostring(action or "unknown"),
+        tostring(result or "denied"),
+        tostring(reason or "none"),
+        tostring(before or "none"),
+        tostring(after or "none"),
+        tostring(released or "none"),
+        tostring(preserved or "none")
+    ))
+end
+
+local function ownerStateSummary(state)
+    if not state then
+        return "unavailable"
+    end
+
+    return ("active:%s,handcuff:%s,carry:%s,commands:%s,bed:%s,cancel:%s,buttons:%s,death:%s,crawl:%s,prison:%s,arena:%s,route:%s"):format(
+        tostring(state.Active == true),
+        tostring(state.Handcuff == true),
+        tostring(state.Carry == true),
+        tostring(state.Commands == true),
+        tostring(state.Bed == true),
+        tostring(state.Cancel == true),
+        tostring(state.Buttons == true),
+        tostring(state.Death == true),
+        tostring(state.Crawl == true),
+        tostring(state.Prison == true or tonumber(state.Prison or 0) > 0),
+        tostring(state.Arena == true or tonumber(state.Arena or 0) > 0),
+        tostring(tonumber(state.Route or 0) or 0)
+    )
+end
+
+local function isOwnerProtectedSource(targetSource)
+    targetSource = tonumber(targetSource)
+    if not targetSource or targetSource <= 0 or not OwnerProtectionEnabled then
+        return false
+    end
+
+    local passport = vRP.Passport(targetSource)
+    return passport and tonumber(passport) == OWNER_PASSPORT and vRP.DoesEntityExist(targetSource) or false
+end
+
+exports("IsOwnerProtected",function(targetSource)
+    local invokingResource = GetInvokingResource()
+    if not OwnerProtectionConsumers[invokingResource] then
+        return false
+    end
+
+    return isOwnerProtectedSource(targetSource)
+end)
+
+exports("ReportProtectionBlock",function(executorSource,targetSource,action)
+    local invokingResource = GetInvokingResource()
+    action = tostring(action or "")
+    if not OwnerProtectionConsumers[invokingResource] or not OwnerProtectionActions[invokingResource] or not OwnerProtectionActions[invokingResource][action] then
+        return false
+    end
+
+    executorSource = tonumber(executorSource)
+    targetSource = tonumber(targetSource)
+    if not executorSource or executorSource <= 0 or not isOwnerProtectedSource(targetSource) then
+        return false
+    end
+
+    local now = GetGameTimer()
+    local key = ("%s:%s:%s"):format(invokingResource,executorSource,action)
+    if OwnerProtectionBlockCooldowns[key] and now < OwnerProtectionBlockCooldowns[key] then
+        return true
+    end
+
+    OwnerProtectionBlockCooldowns[key] = now + OWNER_PROTECTION_COOLDOWN
+    local executorPassport = vRP.Passport(executorSource)
+    notify(executorSource,"O Dono esta com protecao preventiva ativa.","vermelho")
+    if executorSource ~= targetSource then
+        notify(targetSource,("Protecao bloqueou a acao %s do ID %s."):format(action,tostring(executorPassport or "desconhecido")),"amarelo")
+    end
+
+    ownerProtectionLog(executorSource,executorPassport,"blocked_"..action,"denied","owner_protected",nil,nil,nil,nil)
+    return true
+end)
+
+local function ownerProtectionResponse(source,success,enabled,message)
+    TriggerClientEvent("af_owner_panel:protectionResult",source,{
+        success = success == true,
+        enabled = enabled == true,
+        message = message
+    })
+end
+
+local function requestOwnerProtectionToggle(requestSource)
+    local source = tonumber(requestSource)
+    if not source or source <= 0 then
+        ownerProtectionLog(source,nil,"protection_toggle","denied","invalid_source")
+        return false
+    end
+
+    local now = GetGameTimer()
+    local passport = vRP.Passport(source)
+    if OwnerProtectionCooldowns[source] and now < OwnerProtectionCooldowns[source] then
+        ownerProtectionLog(source,passport,"protection_toggle","denied","cooldown")
+        ownerProtectionResponse(source,false,OwnerProtectionEnabled,"Aguarde alguns segundos antes de alternar novamente.")
+        return false
+    end
+
+    OwnerProtectionCooldowns[source] = now + OWNER_PROTECTION_COOLDOWN
+    if not passport or not isOwner(source) then
+        ownerProtectionLog(source,passport,"protection_toggle","denied","not_owner")
+        ownerProtectionResponse(source,false,false,"Protecao permitida exclusivamente ao dono ID 1.")
+        return false
+    end
+
+    local player = Player(source)
+    local state = player and player.state
+    if not state or state.Active ~= true or not vRP.DoesEntityExist(source) then
+        ownerProtectionLog(source,passport,"protection_toggle","denied","inactive_character")
+        ownerProtectionResponse(source,false,OwnerProtectionEnabled,"Finalize a selecao e aguarde o personagem ficar ativo.")
+        return false
+    end
+
+    local before = OwnerProtectionEnabled
+    OwnerProtectionEnabled = not OwnerProtectionEnabled
+    local action = OwnerProtectionEnabled and "protection_on" or "protection_off"
+    ownerProtectionLog(source,passport,action,"success","toggle",tostring(before),tostring(OwnerProtectionEnabled))
+    ownerProtectionResponse(source,true,OwnerProtectionEnabled,OwnerProtectionEnabled and "Protecao preventiva ativada." or "Protecao preventiva desativada temporariamente.")
+    return true
+end
+
+local function appendUnique(list,lookup,value)
+    value = tostring(value or "")
+    if value ~= "" and not lookup[value] then
+        lookup[value] = true
+        list[#list + 1] = value
+    end
+end
+
+local function requestOwnerRelease(requestSource)
+    local source = tonumber(requestSource)
+    if not source or source <= 0 then
+        ownerProtectionLog(source,nil,"self_release","denied","invalid_source")
+        return false
+    end
+
+    local now = GetGameTimer()
+    local passport = vRP.Passport(source)
+    if OwnerReleaseCooldowns[source] and now < OwnerReleaseCooldowns[source] then
+        ownerProtectionLog(source,passport,"self_release","denied","cooldown")
+        TriggerClientEvent("af_owner_panel:releaseResult",source,{ success = false, result = "denied", message = "Aguarde alguns segundos antes de tentar novamente." })
+        return false
+    end
+
+    OwnerReleaseCooldowns[source] = now + OWNER_RELEASE_COOLDOWN
+    local player = Player(source)
+    local state = player and player.state
+    local before = ownerStateSummary(state)
+
+    local function deny(reason,message)
+        ownerProtectionLog(source,passport,"self_release","denied",reason,before,ownerStateSummary(state))
+        TriggerClientEvent("af_owner_panel:releaseResult",source,{ success = false, result = "denied", message = message })
+        return false
+    end
+
+    if not passport or not isOwner(source) then
+        return deny("not_owner","Libertacao permitida exclusivamente ao dono ID 1.")
+    end
+
+    if not state or state.Active ~= true or not vRP.DoesEntityExist(source) then
+        return deny("inactive_character","Finalize a selecao e aguarde o personagem ficar ativo.")
+    end
+
+    if state.Banned == true then
+        return deny("banned_context","Libertacao indisponivel neste contexto.")
+    end
+
+    if state.Prison == true or tonumber(state.Prison or 0) > 0 then
+        return deny("prison_context","Libertacao indisponivel durante a prisao.")
+    end
+
+    if state.Bed == true then
+        return deny("bed_context","Libertacao indisponivel durante tratamento em cama.")
+    end
+
+    if state.Arena == true or tonumber(state.Arena or 0) > 0 then
+        return deny("arena_context","Libertacao indisponivel durante uma arena.")
+    end
+
+    if state.Creation == true then
+        return deny("creation_context","Libertacao indisponivel durante a criacao do personagem.")
+    end
+
+    local route = tonumber(state.Route or 0) or 0
+    local bucket = GetPlayerRoutingBucket(source)
+    if route ~= 0 or bucket ~= 0 then
+        return deny("routing_bucket_context","Libertacao indisponivel fora da rota principal.")
+    end
+
+    local released,releasedLookup = {},{}
+    local preserved,preservedLookup = {},{}
+    local commandsOwned = false
+
+    if GetResourceState("inventory") == "started" then
+        local ok,result = pcall(function()
+            return exports.inventory:ForceReleaseOwner(source)
+        end)
+        if ok and type(result) == "table" and result.success == true then
+            if result.handcuff then appendUnique(released,releasedLookup,"algema") end
+            if result.carryTarget then appendUnique(released,releasedLookup,"carry_alvo") end
+            if result.carryCarrier then appendUnique(released,releasedLookup,"carry_carregador") end
+            if result.carryStale then appendUnique(released,releasedLookup,"carry_residual") end
+            commandsOwned = result.commandsOwned == true
+        else
+            appendUnique(preserved,preservedLookup,"inventory_indisponivel")
+        end
+    else
+        appendUnique(preserved,preservedLookup,"inventory_indisponivel")
+    end
+
+    if GetResourceState("hud") == "started" then
+        local ok,removed = pcall(function()
+            return vHUD.RemoveHood(source)
+        end)
+        if ok then
+            if removed == true then appendUnique(released,releasedLookup,"capuz") end
+        else
+            appendUnique(preserved,preservedLookup,"hud_indisponivel")
+        end
+    else
+        appendUnique(preserved,preservedLookup,"hud_indisponivel")
+    end
+
+    if GetResourceState("player") == "started" then
+        local ok,result = pcall(function()
+            return vPLAYER.OwnerForceRelease(source)
+        end)
+        if ok and type(result) == "table" and result.success == true then
+            if result.trunk then appendUnique(released,releasedLookup,"porta_malas") end
+            if result.trash then appendUnique(released,releasedLookup,"lixo") end
+            commandsOwned = commandsOwned or result.commandsOwned == true
+        else
+            appendUnique(preserved,preservedLookup,"player_indisponivel")
+        end
+    else
+        appendUnique(preserved,preservedLookup,"player_indisponivel")
+    end
+
+    if GetResourceState("inspect") == "started" then
+        local ok,result = pcall(function()
+            return exports.inspect:ForceReleaseOwner(source)
+        end)
+        if ok and type(result) == "table" and result.success == true then
+            if result.inspect then appendUnique(released,releasedLookup,"revista") end
+        else
+            appendUnique(preserved,preservedLookup,"inspect_indisponivel")
+        end
+    else
+        appendUnique(preserved,preservedLookup,"inspect_indisponivel")
+    end
+
+    if commandsOwned then
+        OwnerPendingCommandRelease[source] = true
+    end
+
+    local commandBlockers = {}
+    if state.Bed == true then commandBlockers[#commandBlockers + 1] = "Bed" end
+    if state.Cancel == true then commandBlockers[#commandBlockers + 1] = "Cancel" end
+    if state.Buttons == true then commandBlockers[#commandBlockers + 1] = "Buttons" end
+    if state.Death == true then commandBlockers[#commandBlockers + 1] = "Death" end
+    if state.Crawl == true then commandBlockers[#commandBlockers + 1] = "Crawl" end
+    if state.Prison == true or tonumber(state.Prison or 0) > 0 then commandBlockers[#commandBlockers + 1] = "Prison" end
+    if state.Banned == true then commandBlockers[#commandBlockers + 1] = "Banned" end
+    if state.Arena == true or tonumber(state.Arena or 0) > 0 then commandBlockers[#commandBlockers + 1] = "Arena" end
+
+    if OwnerPendingCommandRelease[source] then
+        if #commandBlockers == 0 then
+            state.Commands = false
+            OwnerPendingCommandRelease[source] = nil
+            appendUnique(released,releasedLookup,"commands")
+        else
+            state.Commands = true
+            appendUnique(preserved,preservedLookup,"commands:"..table.concat(commandBlockers,"|"))
+        end
+    elseif state.Commands == true then
+        appendUnique(preserved,preservedLookup,"commands_sem_ownership")
+    end
+
+    if state.Handcuff == true then appendUnique(preserved,preservedLookup,"algema") end
+    if state.Carry == true then appendUnique(preserved,preservedLookup,"carry") end
+    if state.Death == true then appendUnique(preserved,preservedLookup,"Death") end
+    if state.Crawl == true then appendUnique(preserved,preservedLookup,"Crawl") end
+    if state.Cancel == true then appendUnique(preserved,preservedLookup,"Cancel") end
+    if state.Buttons == true then appendUnique(preserved,preservedLookup,"Buttons") end
+
+    local partial = #preserved > 0
+    local result = partial and "partial" or "success"
+    local releasedText = #released > 0 and table.concat(released,"|") or "none"
+    local preservedText = #preserved > 0 and table.concat(preserved,"|") or "none"
+    ownerProtectionLog(source,passport,"self_release",result,partial and "protected_context_preserved" or "complete",before,ownerStateSummary(state),releasedText,preservedText)
+    TriggerClientEvent("af_owner_panel:releaseResult",source,{
+        success = true,
+        result = result,
+        released = released,
+        preserved = preserved,
+        message = #released == 0 and not partial and "Nenhuma restricao proprietaria estava ativa." or nil
+    })
+    return true
 end
 
 local function ownerRecoveryLog(source,passport,origin,before,result,reason)
@@ -1284,6 +1615,14 @@ RegisterNetEvent("af_owner_panel:requestEmergencySelfRecovery",function()
     requestOwnerRecovery(source,"ofrecover")
 end)
 
+RegisterNetEvent("af_owner_panel:requestProtectionToggle",function()
+    requestOwnerProtectionToggle(source)
+end)
+
+RegisterNetEvent("af_owner_panel:requestSelfRelease",function()
+    requestOwnerRelease(source)
+end)
+
 RegisterNetEvent("af_owner_panel:requestCatalog",function()
     local source = source
     if not isOwner(source) then
@@ -1825,6 +2164,38 @@ RegisterNetEvent("af_owner_panel:adminAction",function(action,payload)
 end)
 
 AddEventHandler("playerDropped",function()
+    local droppedSource = tonumber(source)
     EconomyCooldowns[source] = nil
     OwnerRecoveryCooldowns[source] = nil
+    OwnerProtectionCooldowns[source] = nil
+    OwnerReleaseCooldowns[source] = nil
+    OwnerPendingCommandRelease[source] = nil
+
+    if droppedSource then
+        for key in pairs(OwnerProtectionBlockCooldowns) do
+            if key:match("^[^:]+:"..droppedSource..":") then
+                OwnerProtectionBlockCooldowns[key] = nil
+            end
+        end
+    end
+end)
+
+AddEventHandler("Connect",function(Passport,source)
+    if tonumber(Passport) == OWNER_PASSPORT then
+        OwnerProtectionEnabled = true
+        OwnerProtectionBlockCooldowns = {}
+        OwnerProtectionCooldowns[source] = nil
+        OwnerReleaseCooldowns[source] = nil
+        OwnerPendingCommandRelease[source] = nil
+    end
+end)
+
+AddEventHandler("Disconnect",function(Passport,source)
+    if tonumber(Passport) == OWNER_PASSPORT then
+        OwnerProtectionEnabled = true
+        OwnerProtectionBlockCooldowns = {}
+        OwnerProtectionCooldowns[source] = nil
+        OwnerReleaseCooldowns[source] = nil
+        OwnerPendingCommandRelease[source] = nil
+    end
 end)

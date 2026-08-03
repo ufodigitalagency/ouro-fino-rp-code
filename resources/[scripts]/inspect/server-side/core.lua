@@ -16,6 +16,29 @@ vCLIENT = Tunnel.getInterface("inspect")
 local Admin = {}
 local Players = {}
 local Sourcers = {}
+
+local function ownerProtectionDenied(executorSource,targetSource)
+	if GetResourceState("af_owner_panel") ~= "started" then
+		return false
+	end
+
+	local ok,protected = pcall(function()
+		return exports.af_owner_panel:IsOwnerProtected(targetSource)
+	end)
+	if not ok or protected ~= true then
+		return false
+	end
+
+	local reported,result = pcall(function()
+		return exports.af_owner_panel:ReportProtectionBlock(executorSource,targetSource,"inspect")
+	end)
+	if not reported or result ~= true then
+		TriggerClientEvent("Notify",executorSource,"Protecao","O Dono esta com protecao preventiva ativa.","vermelho",5000)
+		TriggerClientEvent("Notify",targetSource,"Protecao","Uma revista hostil foi bloqueada.","amarelo",5000)
+		print(("[inspect] owner_protection_fallback timestamp=%s executor=%s target=%s action=inspect"):format(os.date("!%Y-%m-%dT%H:%M:%SZ"),tostring(executorSource),tostring(targetSource)))
+	end
+	return true
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- INV
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -44,6 +67,10 @@ RegisterCommand("inv",function(source,Message)
 		return false
 	end
 
+	if ownerProtectionDenied(source,OtherSource) then
+		return false
+	end
+
 	if Players[OtherPassport] then
 		return false
 	end
@@ -60,13 +87,19 @@ end)
 RegisterServerEvent("inspect:Player")
 AddEventHandler("inspect:Player",function(OtherSource)
 	local source = source
+	OtherSource = tonumber(OtherSource)
 	local Passport = vRP.Passport(source)
-	if not Passport or not vRP.DoesEntityExist(OtherSource) then
+	if not Passport or not OtherSource or OtherSource == source or not vRP.DoesEntityExist(source) or not vRP.DoesEntityExist(OtherSource) then
 		return false
 	end
 
 	local OtherPassport = vRP.Passport(OtherSource)
 	if not OtherPassport or Players[OtherPassport] then
+		return false
+	end
+
+	local Distance = #(vRP.GetEntityCoords(source) - vRP.GetEntityCoords(OtherSource))
+	if Distance > 2.0 or ownerProtectionDenied(source,OtherSource) then
 		return false
 	end
 
@@ -83,12 +116,7 @@ AddEventHandler("inspect:Player",function(OtherSource)
 		CanInspect = vRP.Request(OtherSource,"Revistar","Você aceita ser revistado?")
 	end
 
-	if not CanInspect or IsOtherPolice then
-		return false
-	end
-
-	local Distance = #(vRP.GetEntityCoords(source) - vRP.GetEntityCoords(OtherSource))
-	if Distance > 2.0 then
+	if not CanInspect or IsOtherPolice or ownerProtectionDenied(source,OtherSource) then
 		return false
 	end
 
@@ -316,3 +344,43 @@ function FreezePlayer(source,Toggle)
 		FreezeEntityPosition(Ped,Toggle)
 	end
 end
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- FORCERELEASEOWNER
+-----------------------------------------------------------------------------------------------------------------------------------------
+exports("ForceReleaseOwner",function(targetSource)
+	if GetInvokingResource() ~= "af_owner_panel" then
+		return { success = false }
+	end
+
+	targetSource = tonumber(targetSource)
+	local targetPassport = targetSource and vRP.Passport(targetSource) or nil
+	if not targetSource or tonumber(targetPassport) ~= 1 or not vRP.DoesEntityExist(targetSource) then
+		return { success = false }
+	end
+
+	local released = false
+	local sessions = {}
+	for inspectorPassport,currentTarget in pairs(Sourcers) do
+		if tonumber(currentTarget) == targetSource then
+			sessions[#sessions + 1] = inspectorPassport
+		end
+	end
+
+	for _,inspectorPassport in ipairs(sessions) do
+		local inspectorSource = vRP.Source(inspectorPassport)
+		if not Admin[inspectorPassport] then
+			FreezePlayer(targetSource,false)
+		end
+
+		if inspectorSource and vRP.DoesEntityExist(inspectorSource) then
+			TriggerClientEvent("inventory:Close",inspectorSource)
+		end
+
+		Sourcers[inspectorPassport] = nil
+		Players[inspectorPassport] = nil
+		Admin[inspectorPassport] = nil
+		released = true
+	end
+
+	return { success = true, inspect = released }
+end)
