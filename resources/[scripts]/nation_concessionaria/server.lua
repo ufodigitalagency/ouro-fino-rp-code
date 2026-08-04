@@ -106,7 +106,7 @@ local function MakeSet(list)
 end
 
 local RemovedVehicleSet = MakeSet({
-	"gtr", "150", "488", "r1", "2f2fgtr34", "skyliner34", "aperta", "vantage",
+	"gtr", "150", "488", "r1", "2f2fgtr34", "skyliner34", "aperta", "vantage", "d7club8", "lancerevolution9",
 	"bmwg20", "c7", "cbtwister", "cooperworks", "cox2013", "cx75", "d99", "ds4", "ds7", "f812",
 	"fpacehm", "fx4", "gcr2", "hayabusa", "hilux2019", "hyrod", "jeepreneg", "macanturbo", "macla", "mgt",
 	"nh2r", "pajero4", "panamera17turbo", "polo2018", "prius", "punto", "q7w", "rabike", "raiden2", "ram2500",
@@ -124,7 +124,7 @@ config.exclusivePlanVehicles = config.exclusivePlanVehicles or PlanVehicleSet
 config.classOverrides = config.classOverrides or {
 	moto = MakeSet({ "bmws", "r1", "20r1", "r6", "z1000", "s1000rr", "hcbr17", "akuma", "avarus", "bagger", "bati", "bati2", "bf400", "carbonrs", "chimera", "daemon", "daemon2", "defiler", "double", "faggio", "hakuchou", "hakuchou2", "manchez", "pcj", "sanchez", "sanchez2", "shotaro", "vader", "vortex" }),
 	suv = MakeSet({ "1016urus", "urus2018", "amarok", "x6m", "g65", "g65amg", "baller", "baller2", "baller3", "baller4", "baller5", "baller6", "patriot", "patriot2", "bjxl", "cavalcade", "cavalcade2", "contender", "dubsta", "dubsta2", "dubsta3", "fq2", "granger", "gresley", "habanero", "mesa3", "seminole", "serrano", "xls", "xls2", "toros", "freecrawler", "kamacho" }),
-	sport = MakeSet({ "prototipo", "zentorno", "elegy", "elegy2", "p1", "gp1", "lp700r", "nero", "nero2", "omnis", "seven70", "2f2fgtr34", "gtr", "kuruma", "i8", "bmwi8", "d7club8", "adder", "banshee", "banshee2", "carbonizzare", "cheetah", "comet2", "comet3", "comet5", "coquette", "cyclone", "entityxf", "italigtb", "italigtb2", "jester", "jester2", "le7b", "massacro", "massacro2", "nero", "neon", "osiris", "pariah", "reaper", "t20", "turismor", "vagner", "xa21" }),
+	sport = MakeSet({ "prototipo", "zentorno", "elegy", "elegy2", "p1", "gp1", "lp700r", "nero", "nero2", "omnis", "seven70", "2f2fgtr34", "gtr", "kuruma", "i8", "bmwi8", "adder", "banshee", "banshee2", "carbonizzare", "cheetah", "comet2", "comet3", "comet5", "coquette", "cyclone", "entityxf", "italigtb", "italigtb2", "jester", "jester2", "le7b", "massacro", "massacro2", "nero", "neon", "osiris", "pariah", "reaper", "t20", "turismor", "vagner", "xa21" }),
 	truck = MakeSet({ "mule", "mule2", "mule3", "mule4", "rallytruck", "flatbed", "flatbed3", "towtruck", "towtruck2", "phantom", "packer", "benson", "biff", "hauler", "pounder", "rubble", "tiptruck", "tiptruck2", "trash", "trash2" })
 }
 config.locais = config.locais or {
@@ -475,7 +475,7 @@ local function SeedInitialVehicles()
 		end
 	end
 
-	for _,model in ipairs({ "panto", "d7club8", "1016urus" }) do
+	for _,model in ipairs({ "panto", "1016urus" }) do
 		if not seen[model] and not IsRemovedVehicle(model) and RegisteredVehicle(model) and not IsPlanVehicle(model) then
 			seen[model] = true
 			vRP.Execute("nation_conce/addVehicle",{ vehicle = model, estoque = 10 })

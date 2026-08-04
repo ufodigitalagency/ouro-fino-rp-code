@@ -6266,11 +6266,12 @@ local List = {
 		Class = "Importados"
 	},
 	["evo9"] = {
-		Name = "Lancer Evo9",
-		Weight = 60,
-		Price = 200000,
-		Mode = "Rental",
-		Gemstone = 6000,
+		Name = "Lancer Evolution 9",
+		Model = "lancerevolution9",
+		Weight = 50,
+		Price = 1400000,
+		Mode = "Cars",
+		Gemstone = 0,
 		Class = "Importados"
 	},
 	["filthynsx"] = {
@@ -6783,22 +6784,6 @@ local List = {
 		Mode = "Cars",
 		Gemstone = 0,
 		Class = "Clássicos"
-	},
-	lancerevolution9 = {
-		Name = "Lancer Evolution 9",
-		Weight = 50,
-		Price = 1400000,
-		Mode = "Cars",
-		Gemstone = 0,
-		Class = "Importados"
-	},
-	d7club8 = {
-		Name = "D7 Club 8S",
-		Weight = 40,
-		Price = 180000,
-		Mode = "Cars",
-		Gemstone = 0,
-		Class = "Esportivos"
 	},
 	["1016urus"] = {
 		Name = "Lamborghini Urus 1016",
