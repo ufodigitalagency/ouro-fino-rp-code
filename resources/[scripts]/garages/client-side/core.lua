@@ -926,9 +926,17 @@ end)
 -- SELL
 -----------------------------------------------------------------------------------------------------------------------------------------
 RegisterNUICallback("Sell",function(Data,Callback)
-	TriggerServerEvent("garages:Sell",Data.Model)
+	if type(Data) ~= "table" or type(Data.Model) ~= "string" or Data.Model == "" then
+		Callback({ Ack = true, Success = false, Message = "Veiculo invalido." })
+		return
+	end
 
-	Callback("Ok")
+	local Ok,Success,Message = pcall(vSERVER.Sell,Data.Model)
+	Callback({
+		Ack = Ok,
+		Success = Ok and Success == true,
+		Message = Ok and (Message or "Venda processada.") or "Erro de transporte ao processar a venda."
+	})
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- TRANSFER

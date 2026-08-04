@@ -22,6 +22,7 @@ local Changed = {}
 local Searched = {}
 local Respawns = {}
 local Propertys = {}
+local SaleLocks = {}
 
 local function UsefulCustomization(Customize)
 	return type(Customize) == "table" and next(Customize) ~= nil
@@ -247,6 +248,54 @@ local Works = {
 -----------------------------------------------------------------------------------------------------------------------------------------
 local function IsWorkRecord(Value)
 	return Value == true or Value == 1 or Value == "1"
+end
+
+local function IsBlockedRecord(Value)
+	return Value == true or (tonumber(Value) or 0) ~= 0
+end
+
+local function IsRentalRecord(Value)
+	return (tonumber(Value) or 0) ~= 0
+end
+
+local function ActiveCharacter(source,ExpectedPassport)
+	source = tonumber(source)
+	if not source or source <= 0 or GetPlayerName(source) == nil then
+		return false
+	end
+
+	local Passport = vRP.Passport(source)
+	if not Passport or (ExpectedPassport and Passport ~= ExpectedPassport) or vRP.Source(Passport) ~= source then
+		return false
+	end
+
+	return Passport
+end
+
+local function NormalizePropertyKey(Name)
+	if type(Name) ~= "string" then
+		return false
+	end
+
+	Name = Name:match("^%s*(.-)%s*$"):lower()
+	if Name == "" or #Name > 80 or not Name:match("^[%w_%-]+$") then
+		return false
+	end
+
+	return Name
+end
+
+local function SaleLog(Status,Stage,source,Passport,Name,Plate,Detail)
+	Detail = tostring(Detail or "-"):gsub("[%c]"," "):sub(1,180)
+	print(("[garages] action=sell status=%s stage=%s source=%s passport=%s vehicle=%s plate=%s detail=%s"):format(
+		tostring(Status),
+		tostring(Stage),
+		tostring(source),
+		tostring(Passport),
+		tostring(Name),
+		tostring(Plate),
+		Detail
+	))
 end
 
 local function IsWorkVehicle(Number,Model)
@@ -573,39 +622,135 @@ end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:SELL
 -----------------------------------------------------------------------------------------------------------------------------------------
-RegisterServerEvent("garages:Sell")
-AddEventHandler("garages:Sell",function(Name)
-	local source = source
-	local Passport = vRP.Passport(source)
-	if not Passport or Active[Passport] then
-		return false
+local function ProcessVehicleSale(source,Passport,Name)
+	local Vehicle = vRP.SelectVehicle(Passport,Name)
+	if not Vehicle then
+		return false,"propriedade nao encontrada"
+	elseif IsBlockedRecord(Vehicle.Block) then
+		return false,"veiculo bloqueado para venda"
+	elseif IsWorkRecord(Vehicle.Work) then
+		return false,"veiculo de trabalho nao pode ser vendido"
+	elseif IsRentalRecord(Vehicle.Rental) then
+		return false,"veiculo alugado nao pode ser vendido"
+	end
+
+	local Plate = type(Vehicle.Plate) == "string" and Vehicle.Plate or ""
+	if Plate == "" then
+		return false,"placa da propriedade invalida"
 	end
 
 	local Mode = exports.vrp:VehicleMode(Name)
 	local Class = exports.vrp:VehicleClass(Name)
-	local Vehicle = vRP.SelectVehicle(Passport,Name)
-	if Mode == "Work" or Mode == "Rental" or Class == "Races" or (Vehicle and IsWorkRecord(Vehicle.Work)) then
-		return false
+	if Mode == "Work" or Mode == "Rental" or Class == "Races" then
+		return false,"categoria de veiculo nao permite venda"
+	end
+
+	local Price = parseInt(exports.vrp:VehiclePrice(Name) * 0.5)
+	local VehicleName = exports.vrp:VehicleName(Name)
+	if Price <= 0 then
+		return false,"valor de venda invalido"
+	end
+
+	TriggerClientEvent("garages:Close",source)
+	if not vRP.Request(source,"Garagem","Vender o veículo <b>"..VehicleName.."</b> por <b>$"..Dotted(Price).."</b>?") then
+		return false,"venda cancelada"
+	end
+
+	if ActiveCharacter(source,Passport) ~= Passport then
+		return false,"personagem desconectado"
+	end
+
+	local readOk,Current = pcall(vRP.SelectVehicle,Passport,Name)
+	if not readOk or type(Current) ~= "table" then
+		SaleLog("denied","property_revalidation",source,Passport,Name,Plate,readOk and "missing" or Current)
+		return false,"propriedade nao encontrada"
+	elseif Current.Plate ~= Plate or tonumber(Current.Passport) ~= Passport then
+		SaleLog("denied","property_changed",source,Passport,Name,Plate,"owner or plate changed")
+		return false,"a propriedade mudou durante a venda"
+	elseif IsBlockedRecord(Current.Block) or IsWorkRecord(Current.Work) or IsRentalRecord(Current.Rental) then
+		return false,"veiculo nao pode mais ser vendido"
+	end
+
+	Mode = exports.vrp:VehicleMode(Name)
+	Class = exports.vrp:VehicleClass(Name)
+	if Mode == "Work" or Mode == "Rental" or Class == "Races" then
+		return false,"categoria de veiculo nao permite venda"
+	end
+
+	Price = parseInt(exports.vrp:VehiclePrice(Name) * 0.5)
+	if Price <= 0 then
+		return false,"valor de venda invalido"
+	end
+
+	local deleteOk,affected = pcall(vRP.Update,"vehicles/removeVehicleExact",{
+		Passport = Passport,
+		Vehicle = Name,
+		Plate = Plate
+	})
+
+	if not deleteOk or tonumber(affected) ~= 1 then
+		SaleLog("denied","delete",source,Passport,Name,Plate,deleteOk and affected or affected)
+		TriggerClientEvent("Notify",source,"Garagem","Nao foi possivel confirmar a exclusao da propriedade.","vermelho",5000)
+		return false,"propriedade nao removida"
+	end
+
+	local creditOk,creditError = pcall(vRP.GiveBank,Passport,Price)
+	if not creditOk then
+		SaleLog("critical","credit",source,Passport,Name,Plate,creditError)
+		TriggerClientEvent("Notify",source,"Garagem","Propriedade removida, mas o credito falhou. Procure a administracao.","vermelho",8000)
+		return false,"falha critica no credito"
+	end
+
+	local customOk,customError = pcall(vRP.RemSrvData,"LsCustoms:"..Passport..":"..Name)
+	if not customOk then
+		SaleLog("warning","customization_cleanup",source,Passport,Name,Plate,customError)
+	end
+
+	local trunkOk,trunkError = pcall(vRP.RemSrvData,"Trunkchest:"..Passport..":"..Name)
+	if not trunkOk then
+		SaleLog("warning","trunk_cleanup",source,Passport,Name,Plate,trunkError)
+	end
+
+	SaleLog("success","complete",source,Passport,Name,Plate,"affectedRows=1 credit="..Price)
+	TriggerClientEvent("Notify",source,VehicleName,"Veículo vendido com sucesso.","verde",5000)
+	return true,"veiculo vendido com sucesso"
+end
+
+local function ExecuteVehicleSale(requestSource,Name)
+	local source = tonumber(requestSource)
+	local Passport = ActiveCharacter(source)
+	Name = NormalizePropertyKey(Name)
+
+	if not Passport then
+		return false,"personagem indisponivel"
+	elseif not Name or not exports.vrp:VehicleExist(Name) then
+		return false,"veiculo invalido"
+	elseif Active[Passport] or SaleLocks[Passport] then
+		return false,"operacao ja esta em processamento"
 	end
 
 	Active[Passport] = true
-	TriggerClientEvent("garages:Close",source)
+	SaleLocks[Passport] = Name
+	local ok,state,message = pcall(ProcessVehicleSale,source,Passport,Name)
+	SaleLocks[Passport] = nil
+	Active[Passport] = nil
 
-	local Price = exports.vrp:VehiclePrice(Name) * 0.5
-	local VehicleName = exports.vrp:VehicleName(Name)
-	local FormattedPrice = Dotted(Price)
-
-	if vRP.Request(source,"Garagem","Vender o veículo <b>"..VehicleName.."</b> por <b>$"..FormattedPrice.."</b>?") then
-		if Vehicle and not Vehicle.Block then
-			vRP.GiveBank(Passport,Price)
-			vRP.RemSrvData("LsCustoms:"..Passport..":"..Name)
-			vRP.RemSrvData("Trunkchest:"..Passport..":"..Name)
-			vRP.Query("vehicles/removeVehicles",{ Passport = Passport, Vehicle = Name })
-			TriggerClientEvent("Notify",source,VehicleName,"Veículo vendido com sucesso.","verde",5000)
-		end
+	if not ok then
+		SaleLog("error","unhandled",source,Passport,Name,"-",state)
+		TriggerClientEvent("Notify",source,"Garagem","Erro interno ao processar a venda.","vermelho",5000)
+		return false,"erro interno ao processar a venda"
 	end
 
-	Active[Passport] = nil
+	return state == true,message
+end
+
+function Lil.Sell(Name)
+	return ExecuteVehicleSale(source,Name)
+end
+
+RegisterServerEvent("garages:Sell")
+AddEventHandler("garages:Sell",function(Name)
+	ExecuteVehicleSale(source,Name)
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES:TRANSFER
@@ -619,7 +764,7 @@ AddEventHandler("garages:Transfer",function(Name)
 	end
 
 	local Vehicle = vRP.SelectVehicle(Passport,Name)
-	if not Vehicle or Vehicle.Block or IsWorkRecord(Vehicle.Work) then
+	if not Vehicle or IsBlockedRecord(Vehicle.Block) or IsWorkRecord(Vehicle.Work) then
 		return false
 	end
 
