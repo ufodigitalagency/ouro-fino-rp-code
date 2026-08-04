@@ -104,7 +104,7 @@ local function MakeSet(list)
 end
 
 local RemovedVehicleSet = MakeSet({
-	"gtr", "150", "488", "r1", "2f2fgtr34", "skyliner34",
+	"gtr", "150", "488", "r1", "2f2fgtr34", "skyliner34", "aperta", "vantage",
 	"bmwg20", "c7", "cbtwister", "cooperworks", "cox2013", "cx75", "d99", "ds4", "ds7", "f812",
 	"fpacehm", "fx4", "gcr2", "hayabusa", "hilux2019", "hyrod", "jeepreneg", "macanturbo", "macla", "mgt",
 	"nh2r", "pajero4", "panamera17turbo", "polo2018", "prius", "punto", "q7w", "rabike", "raiden2", "ram2500",
