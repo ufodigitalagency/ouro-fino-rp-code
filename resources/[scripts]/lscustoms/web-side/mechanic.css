@@ -1,0 +1,322 @@
+:root {
+    --of-panel: #0d1118;
+    --of-panel-soft: #151b25;
+    --of-border: rgba(255, 255, 255, 0.1);
+    --of-text: #f4f7fb;
+    --of-muted: #8e9aaa;
+    --of-cyan: #1dc9e8;
+    --of-purple: #8c35ff;
+    --of-green: #35c982;
+    --of-red: #ef5a67;
+}
+
+body.of-mechanic-open #app {
+    width: calc(100vw - 390px);
+    max-width: calc(100vw - 390px);
+    overflow: hidden;
+}
+
+.of-mechanic-panel,
+.of-mechanic-panel * {
+    box-sizing: border-box;
+    font-family: Manrope, Arial, sans-serif;
+}
+
+.of-mechanic-panel {
+    position: fixed;
+    z-index: 9000;
+    top: 18px;
+    right: 18px;
+    bottom: 18px;
+    width: 350px;
+    display: none;
+    flex-direction: column;
+    color: var(--of-text);
+    background: linear-gradient(165deg, rgba(19, 27, 38, 0.98), rgba(7, 10, 15, 0.99));
+    border: 1px solid var(--of-border);
+    border-top: 3px solid var(--of-cyan);
+    border-radius: 8px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.of-mechanic-panel.is-visible {
+    display: flex;
+}
+
+.of-mechanic-header {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--of-border);
+}
+
+.of-mechanic-eyebrow {
+    color: var(--of-cyan);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.of-mechanic-title {
+    margin: 4px 0 0;
+    font-size: 23px;
+    line-height: 1.1;
+}
+
+.of-mechanic-owner {
+    margin-top: 8px;
+    color: var(--of-muted);
+    font-size: 12px;
+}
+
+.of-mechanic-status {
+    display: none;
+    margin: 12px 16px 0;
+    padding: 10px 12px;
+    color: #c9f7ff;
+    background: rgba(29, 201, 232, 0.1);
+    border: 1px solid rgba(29, 201, 232, 0.24);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.of-mechanic-status.is-visible {
+    display: block;
+}
+
+.of-mechanic-status.is-error {
+    color: #ffd0d4;
+    background: rgba(239, 90, 103, 0.11);
+    border-color: rgba(239, 90, 103, 0.28);
+}
+
+.of-mechanic-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--of-border);
+}
+
+.of-mechanic-section-title {
+    margin-bottom: 10px;
+    color: var(--of-muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.of-mechanic-doors {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.of-mechanic-section-title-controls {
+    margin-top: 14px;
+}
+
+.of-mechanic-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.of-mechanic-door,
+.of-mechanic-control,
+.of-mechanic-secondary,
+.of-mechanic-primary,
+.of-mechanic-danger,
+.of-mechanic-modal-button {
+    min-height: 38px;
+    color: var(--of-text);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--of-border);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.of-mechanic-door:hover,
+.of-mechanic-control:hover,
+.of-mechanic-secondary:hover {
+    background: rgba(255, 255, 255, 0.11);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.of-mechanic-control.is-active {
+    color: #d9fff0;
+    background: rgba(53, 201, 130, 0.16);
+    border-color: rgba(53, 201, 130, 0.42);
+}
+
+.of-mechanic-cart {
+    min-height: 0;
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.of-mechanic-empty {
+    padding: 34px 12px;
+    color: var(--of-muted);
+    text-align: center;
+    border: 1px dashed var(--of-border);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.of-mechanic-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 5px 10px;
+    margin-bottom: 8px;
+    padding: 11px 12px;
+    background: var(--of-panel-soft);
+    border: 1px solid var(--of-border);
+    border-radius: 6px;
+}
+
+.of-mechanic-item-label {
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.of-mechanic-item-detail {
+    color: var(--of-muted);
+    font-size: 10px;
+}
+
+.of-mechanic-item-price {
+    grid-row: 1 / 3;
+    grid-column: 2;
+    align-self: center;
+    color: var(--of-cyan);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.of-mechanic-item-remove {
+    grid-column: 1 / 3;
+    justify-self: start;
+    padding: 0;
+    color: var(--of-red);
+    background: transparent;
+    border: 0;
+    font-size: 10px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.of-mechanic-footer {
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.25);
+    border-top: 1px solid var(--of-border);
+}
+
+.of-mechanic-total {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.of-mechanic-total span {
+    color: var(--of-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.of-mechanic-total strong {
+    color: var(--of-cyan);
+    font-size: 24px;
+}
+
+.of-mechanic-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.of-mechanic-primary {
+    grid-column: 1 / 3;
+    min-height: 46px;
+    background: linear-gradient(90deg, var(--of-cyan), var(--of-purple));
+    border: 0;
+}
+
+.of-mechanic-danger {
+    color: #ffd2d6;
+    border-color: rgba(239, 90, 103, 0.3);
+}
+
+.of-mechanic-panel button:disabled {
+    opacity: 0.38;
+    cursor: default;
+}
+
+.of-mechanic-modal {
+    position: fixed;
+    z-index: 9100;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(2, 4, 8, 0.78);
+}
+
+.of-mechanic-modal.is-visible {
+    display: flex;
+}
+
+.of-mechanic-modal-card {
+    width: min(430px, 100%);
+    padding: 24px;
+    color: var(--of-text);
+    background: #0c1118;
+    border: 1px solid var(--of-border);
+    border-top: 3px solid var(--of-purple);
+    border-radius: 8px;
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.7);
+}
+
+.of-mechanic-modal-card h2 {
+    margin: 0 0 8px;
+    font-size: 22px;
+}
+
+.of-mechanic-modal-card p {
+    margin: 0 0 12px;
+    color: var(--of-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.of-mechanic-modal-total {
+    margin: 16px 0;
+    color: var(--of-cyan);
+    font-size: 25px;
+    font-weight: 800;
+}
+
+.of-mechanic-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.of-mechanic-modal-button.is-confirm {
+    background: var(--of-green);
+    border-color: transparent;
+}
+
+@media (max-width: 1100px) {
+    body.of-mechanic-open #app {
+        width: calc(100vw - 330px);
+        max-width: calc(100vw - 330px);
+    }
+
+    .of-mechanic-panel {
+        right: 10px;
+        width: 305px;
+    }
+}
