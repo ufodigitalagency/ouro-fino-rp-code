@@ -90,6 +90,56 @@ local function NormalizePlate(Plate)
 	return tostring(Plate or ""):gsub("%s+",""):upper()
 end
 
+local function ValidPlate(Plate)
+	return type(Plate) == "string" and #Plate >= 1 and #Plate <= 8 and Plate:match("^[A-Z0-9]+$") ~= nil
+end
+
+local function ResolveVehicleProperty(Vehicle,Plate,ExpectedPassport,ExpectedPropertyKey,ExpectedNativeModel)
+	local NormalizedPlate = NormalizePlate(Plate)
+	if not ValidPlate(NormalizedPlate) or not Vehicle or Vehicle <= 0 or not DoesEntityExist(Vehicle) then
+		return false,"Veiculo ou placa invalida."
+	end
+
+	local Queried,Property = pcall(vRP.SingleQuery,"vehicles/plateVehicles",{ Plate = NormalizedPlate })
+	if not Queried or type(Property) ~= "table" then
+		return false,"Propriedade do veiculo nao encontrada."
+	end
+
+	local PropertyPassport = tonumber(Property.Passport)
+	local PropertyKey = type(Property.Vehicle) == "string" and Property.Vehicle or ""
+	if not PropertyPassport or PropertyPassport <= 0 or PropertyKey == "" then
+		return false,"Propriedade do veiculo invalida."
+	end
+
+	if ExpectedPassport and PropertyPassport ~= ExpectedPassport then
+		return false,"A propriedade do veiculo mudou durante o atendimento."
+	end
+
+	if ExpectedPropertyKey and PropertyKey ~= ExpectedPropertyKey then
+		return false,"O veiculo da propriedade mudou durante o atendimento."
+	end
+
+	local NativeModel = exports.vrp:VehicleModel(PropertyKey)
+	if type(NativeModel) ~= "string" or NativeModel == "" then
+		return false,"Modelo do veiculo nao registrado."
+	end
+
+	if ExpectedNativeModel and NativeModel ~= ExpectedNativeModel then
+		return false,"O modelo registrado do veiculo mudou durante o atendimento."
+	end
+
+	if GetEntityModel(Vehicle) ~= GetHashKey(NativeModel) then
+		return false,"O modelo real do veiculo nao corresponde a propriedade."
+	end
+
+	return {
+		Passport = PropertyPassport,
+		PropertyKey = PropertyKey,
+		NativeModel = NativeModel,
+		Plate = NormalizedPlate
+	}
+end
+
 local function IsPlayerOnline(Source)
 	return Source and Source > 0 and GetPlayerName(Source) ~= nil
 end
@@ -129,7 +179,7 @@ local function HasMechanicAccess(Source,Passport,Silent)
 end
 
 local function ValidateVehicle(Source,Passport,Network,Plate,AllowInside,Silent,RequireWorkshop)
-	if not HasMechanicAccess(Source,Passport,Silent) or not Network or Network <= 0 then
+	if not IsPlayerOnline(Source) or vRP.Passport(Source) ~= Passport or not HasMechanicAccess(Source,Passport,Silent) or not Network or Network <= 0 then
 		return false,"Acesso negado."
 	end
 
@@ -187,7 +237,7 @@ end
 
 local function CustomerNearVehicle(Session)
 	local Source = vRP.Source(Session.CustomerPassport)
-	if not IsPlayerOnline(Source) then
+	if not IsPlayerOnline(Source) or Source ~= Session.CustomerSource or vRP.Passport(Source) ~= Session.CustomerPassport then
 		return false,"O proprietario precisa estar online."
 	end
 
@@ -285,8 +335,8 @@ end
 
 local function MergeCustomization(Passport,Model,Proposal)
 	local Name = Passport..":"..Model
-	local Consult = vRP.GetSrvData("LsCustoms:"..Name,true)
-	if type(Consult) ~= "table" then
+	local Loaded,Consult = pcall(vRP.GetSrvData,"LsCustoms:"..Name,true)
+	if not Loaded or type(Consult) ~= "table" then
 		Consult = {}
 	end
 
@@ -404,8 +454,9 @@ local function CompleteQuote(Session,Accepted)
 		return
 	end
 
-	if vRP.PassportPlate(Session.Plate) ~= Session.CustomerPassport then
-		CancelSession(Session,"A propriedade do veiculo mudou durante o atendimento.",true)
+	local Property,PropertyReason = ResolveVehicleProperty(Vehicle,Session.Plate,Session.CustomerPassport,Session.PropertyKey,Session.NativeModel)
+	if not Property then
+		CancelSession(Session,PropertyReason,true)
 		return
 	end
 
@@ -416,7 +467,7 @@ local function CompleteQuote(Session,Accepted)
 		return
 	end
 
-	local Key,Data = MergeCustomization(Session.CustomerPassport,Session.Model,Session.Preview)
+	local Key,Data = MergeCustomization(Session.CustomerPassport,Session.PropertyKey,Session.Preview)
 	local Persisted,PersistenceError = pcall(function()
 		vRP.Query("entitydata/SetData",{ Name = Key, Information = json.encode(Data) })
 		vRP.SetSrvData(Key,Data,true)
@@ -484,14 +535,17 @@ end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- SESSION
 -----------------------------------------------------------------------------------------------------------------------------------------
-function Lil.StartSession(Network,Plate,Model,Original)
-	local Source = source
-	local Passport = vRP.Passport(Source)
+function Lil.StartSession(Network,Plate,_,Original)
+	local Source = tonumber(source)
 	Network = parseInt(Network)
-	Plate = tostring(Plate or "")
-	Model = tostring(Model or "")
+	Plate = NormalizePlate(Plate)
 
-	if not Passport or Model == "" or Plate == "" or type(Original) ~= "table" then
+	if not IsPlayerOnline(Source) then
+		return { success = false, message = "Dados do atendimento invalidos." }
+	end
+
+	local Passport = vRP.Passport(Source)
+	if not Passport or not ValidPlate(Plate) or type(Original) ~= "table" then
 		return { success = false, message = "Dados do atendimento invalidos." }
 	end
 
@@ -510,9 +564,14 @@ function Lil.StartSession(Network,Plate,Model,Original)
 		end
 	end
 
-	local CustomerPassport = vRP.PassportPlate(Plate)
+	local Property,PropertyReason = ResolveVehicleProperty(Vehicle,Plate)
+	if not Property then
+		return { success = false, message = PropertyReason }
+	end
+
+	local CustomerPassport = Property.Passport
 	local CustomerSource = CustomerPassport and vRP.Source(CustomerPassport)
-	if not CustomerPassport or not IsPlayerOnline(CustomerSource) then
+	if not CustomerPassport or not IsPlayerOnline(CustomerSource) or vRP.Passport(CustomerSource) ~= CustomerPassport then
 		return { success = false, message = "O proprietario do veiculo precisa estar online." }
 	end
 
@@ -531,10 +590,12 @@ function Lil.StartSession(Network,Plate,Model,Original)
 		Id = SessionId,
 		MechanicSource = Source,
 		MechanicPassport = Passport,
+		CustomerSource = CustomerSource,
 		CustomerPassport = CustomerPassport,
 		Network = Network,
-		Plate = NormalizePlate(Plate),
-		Model = Model,
+		Plate = Property.Plate,
+		PropertyKey = Property.PropertyKey,
+		NativeModel = Property.NativeModel,
 		Original = DeepCopy(Original),
 		Preview = DeepCopy(Original),
 		Total = 0,
@@ -549,7 +610,7 @@ function Lil.StartSession(Network,Plate,Model,Original)
 		SessionByPassport[CustomerPassport] = SessionId
 	end
 	Networked[Passport] = { Network,Session.Plate }
-	Debug(("sessao criada: id=%s mechanic=%s owner=%s network=%s"):format(SessionId,Passport,CustomerPassport,Network))
+	Debug(("sessao criada: id=%s mechanic=%s owner=%s property=%s native=%s network=%s"):format(SessionId,Passport,CustomerPassport,Session.PropertyKey,Session.NativeModel,Network))
 
 	return {
 		success = true,
@@ -583,6 +644,12 @@ function Lil.PrepareQuote(SessionId,Proposal)
 		return { success = false, message = OwnerSource }
 	end
 
+	local Property,PropertyReason = ResolveVehicleProperty(Vehicle,Session.Plate,Session.CustomerPassport,Session.PropertyKey,Session.NativeModel)
+	if not Property then
+		CancelSession(Session,PropertyReason,true)
+		return { success = false, message = PropertyReason }
+	end
+
 	local Sanitized,SanitizeError = SanitizeProposal(Session,Proposal)
 	if not Sanitized then
 		return { success = false, message = SanitizeError }
@@ -593,7 +660,7 @@ function Lil.PrepareQuote(SessionId,Proposal)
 		return { success = false, message = "Adicione ao menos uma modificacao ao orcamento." }
 	end
 
-	local Calculated,Total = pcall(Calculate,Sanitized,Session.Model)
+	local Calculated,Total = pcall(Calculate,Sanitized,Session.NativeModel)
 	if not Calculated or type(Total) ~= "number" or Total < 0 then
 		Debug(("calculo negado: id=%s error=%s"):format(Session.Id,tostring(Total)))
 		return { success = false, message = "Nao foi possivel calcular o orcamento." }
@@ -605,7 +672,7 @@ function Lil.PrepareQuote(SessionId,Proposal)
 	Session.State = "waiting"
 	Session.QuoteExpiresAt = os.time() + MechanicConfig.QuoteTimeout
 	local Summary = table.concat(Changes,", ")
-	local VehicleName = exports.vrp:VehicleName(Session.Model) or Session.Model
+	local VehicleName = exports.vrp:VehicleName(Session.PropertyKey) or Session.PropertyKey
 	local SelfOwned = Session.CustomerPassport == Session.MechanicPassport
 	Debug(("orcamento enviado: id=%s total=%s items=%s self=%s"):format(Session.Id,Session.Total,#Changes,tostring(SelfOwned)))
 

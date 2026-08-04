@@ -22,6 +22,37 @@ local Changed = {}
 local Searched = {}
 local Respawns = {}
 local Propertys = {}
+
+local function UsefulCustomization(Customize)
+	return type(Customize) == "table" and next(Customize) ~= nil
+end
+
+local function ReadCustomization(Key)
+	local Success,Customize = pcall(vRP.GetSrvData,Key,true)
+	if not Success or type(Customize) ~= "table" then
+		return {},false
+	end
+
+	return Customize,UsefulCustomization(Customize)
+end
+
+local function VehicleCustomization(Passport,PropertyKey)
+	local Canonical = "LsCustoms:"..Passport..":"..PropertyKey
+	local Customize,Useful = ReadCustomization(Canonical)
+	if Useful then
+		return Customize
+	end
+
+	local NativeModel = exports.vrp:VehicleModel(PropertyKey)
+	if type(NativeModel) == "string" and NativeModel ~= "" and NativeModel ~= PropertyKey then
+		local Legacy,LegacyUseful = ReadCustomization("LsCustoms:"..Passport..":"..NativeModel)
+		if LegacyUseful then
+			return Legacy
+		end
+	end
+
+	return Customize
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- GARAGES
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -370,7 +401,7 @@ AddEventHandler("garages:Respawns",function(Plate)
 
 	Active[Passport] = true
 
-	local Mods = vRP.GetSrvData("LsCustoms:"..OtherPassport..":"..Model,true)
+	local Mods = VehicleCustomization(OtherPassport,Model)
 	local Exist,Network,Entitys,_,SpawnModel = Lil.ServerVehicle(Model,Respawn,Plate,VehicleData.Nitro,VehicleData.Doors,VehicleData.Body,VehicleData.Fuel,VehicleData.Seatbelt,VehicleData.Drift)
 	if not Exist then
 		print(("[garages] Falha ao criar veiculo: Passport=%s Vehicle=%s Model=%s"):format(OtherPassport,Model,exports.vrp:VehicleModel(Model) or Model))
@@ -894,7 +925,7 @@ AddEventHandler("garages:Spawn",function(Name,Number)
 
 	local Coords = vCLIENT.SpawnPosition(source,Number)
 	if Coords then
-		local Mods = vRP.GetSrvData("LsCustoms:"..Passport..":"..Name,true)
+		local Mods = VehicleCustomization(Passport,Name)
 		local Exist,Network,Entitys,_,SpawnModel = Lil.ServerVehicle(Name,Coords,Plate,Vehicle.Nitro,Vehicle.Doors,Vehicle.Body,Vehicle.Fuel,Vehicle.Seatbelt,Vehicle.Drift)
 		if Exist then
 			local Players = vRPC.Players(source)
