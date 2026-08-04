@@ -9,6 +9,8 @@ Tunnel.bindInterface("nation_concessionaria",func)
 
 local conceVehicles = {}
 local userVehicles = {}
+local PurchasePassportLocks = {}
+local PurchaseModelLocks = {}
 local makeVec3 = vec3 or vector3
 
 config = config or {}
@@ -162,6 +164,65 @@ local function Passport(source)
 	return source and vRP.Passport(source)
 end
 
+local function ActiveCharacter(source,ExpectedPassport)
+	source = tonumber(source)
+	if not source or source <= 0 or GetPlayerName(source) == nil then
+		return false
+	end
+
+	local CurrentPassport = Passport(source)
+	if not CurrentPassport or (ExpectedPassport and CurrentPassport ~= ExpectedPassport) or vRP.Source(CurrentPassport) ~= source then
+		return false
+	end
+
+	return CurrentPassport
+end
+
+local function NormalizeVehicleModel(model)
+	if type(model) ~= "string" then
+		return false
+	end
+
+	model = model:match("^%s*(.-)%s*$"):lower()
+	if model == "" or #model > 80 or not model:match("^[%w_%-]+$") then
+		return false
+	end
+
+	return model
+end
+
+local function PurchaseLog(status,stage,source,Passport,model,detail)
+	detail = tostring(detail or "-"):gsub("[%c]"," "):sub(1,180)
+	print(("[nation_concessionaria] action=purchase status=%s stage=%s source=%s passport=%s model=%s detail=%s"):format(
+		tostring(status),
+		tostring(stage),
+		tostring(source),
+		tostring(Passport),
+		tostring(model),
+		detail
+	))
+end
+
+local function AcquirePurchaseLock(Passport,model)
+	if PurchasePassportLocks[Passport] or PurchaseModelLocks[model] then
+		return false
+	end
+
+	PurchasePassportLocks[Passport] = model
+	PurchaseModelLocks[model] = Passport
+	return true
+end
+
+local function ReleasePurchaseLock(Passport,model)
+	if PurchasePassportLocks[Passport] == model then
+		PurchasePassportLocks[Passport] = nil
+	end
+
+	if PurchaseModelLocks[model] == Passport then
+		PurchaseModelLocks[model] = nil
+	end
+end
+
 local function IsAdmin(Passport)
 	return Passport == 1 or vRP.HasGroup(Passport,"Admin",1) or vRP.HasPermission(Passport,"Admin")
 end
@@ -179,7 +240,23 @@ local function RegisteredVehicle(model)
 		return exports.vrp:VehicleExist(model)
 	end)
 
-	return ok and result or false
+	return ok and result ~= nil and result ~= false
+end
+
+local function NativeVehicleModel(model)
+	if not RegisteredVehicle(model) then
+		return false
+	end
+
+	local ok,result = pcall(function()
+		return exports.vrp:VehicleModel(model)
+	end)
+
+	if not ok or type(result) ~= "string" or result == "" or #result > 80 or not result:match("^[%w_%-]+$") then
+		return false
+	end
+
+	return result
 end
 
 local function VrpVehicleValue(exportName,model,fallback)
@@ -371,6 +448,7 @@ local function PrepareDatabase()
 	vRP.Prepare("nation_conce/removeVehicle","DELETE FROM nation_concessionaria WHERE vehicle = @vehicle")
 	vRP.Prepare("nation_conce/setEstoque","UPDATE nation_concessionaria SET estoque = @estoque WHERE vehicle = @vehicle")
 	vRP.Prepare("nation_conce/removeOneEstoque","UPDATE nation_concessionaria SET estoque = GREATEST(estoque - 1,0) WHERE vehicle = @vehicle")
+	vRP.Prepare("nation_conce/takeOneStock","UPDATE nation_concessionaria SET estoque = estoque - 1 WHERE vehicle = @vehicle AND estoque > 0")
 
 	vRP.Execute("nation_conce/createDB")
 	pcall(function() vRP.Execute("nation_conce/addPriceColumn") end)
@@ -566,6 +644,49 @@ local function registerPurchaseTax(Passport,model,price)
 	end
 end
 
+local function UpdatePurchasedStockCache(model)
+	for index,vehicle in ipairs(conceVehicles) do
+		if vehicle.vehicle == model then
+			local stock = math.max(parseInt(vehicle.estoque or 0) - 1,0)
+			if stock <= 0 then
+				table.remove(conceVehicles,index)
+			else
+				vehicle.estoque = stock
+			end
+
+			return stock
+		end
+	end
+
+	return 0
+end
+
+local function RefundPurchase(source,Passport,model,price,stage)
+	local ok,result = pcall(vRP.GiveBank,Passport,price,true)
+	if not ok then
+		PurchaseLog("critical","payment_refund",source,Passport,model,result)
+		return false
+	end
+
+	PurchaseLog("refunded",stage,source,Passport,model,price)
+	return true
+end
+
+local function RemoveInsertedProperty(source,Passport,model,plate)
+	local ok,affected = pcall(vRP.Update,"vehicles/removeVehicleExact",{
+		Passport = Passport,
+		Vehicle = model,
+		Plate = plate
+	})
+
+	if not ok or tonumber(affected) ~= 1 then
+		PurchaseLog("critical","property_rollback",source,Passport,model,ok and affected or affected)
+		return false
+	end
+
+	return true
+end
+
 function func.getConfig()
 	return PublicConfig()
 end
@@ -617,111 +738,142 @@ function func.getDiscount(id)
 	return 0
 end
 
-local function processVehiclePurchase(requestSource,model,color)
-	local passport = Passport(requestSource)
-	local stock = getVehicleEstoque(model)
-
-	if not passport then
-		return false,"passaporte invalido"
+local function processVehiclePurchase(requestSource,passport,model,color)
+	if ActiveCharacter(requestSource,passport) ~= passport then
+		return false,"personagem indisponivel"
 	elseif IsRemovedVehicle(model) then
 		return false,"veiculo removido da concessionaria"
-	elseif stock <= 0 then
+	end
+
+	local info = getVehicleFromCache(model)
+	local NativeModel = NativeVehicleModel(model)
+	local ownershipOk,owned = pcall(hasVehicle,passport,model)
+	if not info then
+		return false,"veiculo fora do catalogo"
+	elseif info.registered ~= true or not NativeModel then
+		return false,"veiculo sem registro valido"
+	elseif getVehicleEstoque(model) <= 0 then
 		return false,"veiculo fora de estoque"
-	elseif hasVehicle(passport,model) then
+	elseif not ownershipOk then
+		return false,"nao foi possivel validar a propriedade"
+	elseif owned then
 		return false,"veiculo ja possuido"
 	end
 
-	local info = VehicleInfo(model)
-	if not info then
-		return false,"veiculo nao registrado na base"
-	end
-
 	local discount = func.getDiscount(passport) / 100
-	local price = parseInt(getVehiclePrice(model) - (getVehiclePrice(model) * discount))
-
+	local catalogPrice = parseInt(info.price or 0)
+	local price = parseInt(catalogPrice - (catalogPrice * discount))
 	if price <= 0 then
 		return false,"preco invalido"
 	end
 
 	local paymentOk,paid = pcall(vRP.PaymentFull,passport,price,true)
 	if not paymentOk then
-		error("falha ao processar pagamento: "..tostring(paid))
-	elseif not paid then
+		PurchaseLog("error","payment",requestSource,passport,model,paid)
+		return false,"falha ao processar pagamento"
+	elseif paid ~= true then
 		return false,"dinheiro insuficiente"
 	end
 
-	local inserted = false
-	local stockRemoved = false
-	local cacheAdded = false
-	local persistOk,persistError = pcall(function()
-		vRP.Query("vehicles/addVehicles",{
-			Passport = passport,
-			Vehicle = model,
-			Plate = vRP.GeneratePlate(),
-			Weight = info.capacidade,
-			Work = 0
-		})
-		inserted = true
-
-		if not removeEstoque(model,1) then
-			error("nao foi possivel atualizar o estoque")
-		end
-		stockRemoved = true
-
-		addUserVehicle(passport,info)
-		cacheAdded = true
-		registerPurchaseTax(passport,model,price)
-	end)
-
-	if not persistOk then
-		if inserted then
-			pcall(vRP.Query,"vehicles/removeVehicles",{ Passport = passport, Vehicle = model })
+	local function CancelPaidPurchase(stage,message,inserted,plate,detail)
+		if inserted and not RemoveInsertedProperty(requestSource,passport,model,plate) then
+			PurchaseLog("critical",stage,requestSource,passport,model,"property retained; refund blocked: "..tostring(detail))
+			return false,"falha critica; procure a administracao"
 		end
 
-		if stockRemoved then
-			pcall(addEstoque,model,1)
+		if not RefundPurchase(requestSource,passport,model,price,stage) then
+			return false,"falha critica no estorno; procure a administracao"
 		end
 
-		if cacheAdded then
-			pcall(removeUserVehicle,passport,model)
-		end
-
-		local refundOk,refundError = pcall(vRP.GiveBank,passport,price,true)
-		if not refundOk then
-			print(("[nation_concessionaria] ATENCAO: falha ao estornar Passport=%s valor=%s erro=%s"):format(
-				tostring(passport),
-				tostring(price),
-				tostring(refundError)
-			))
-		end
-
-		error("falha ao persistir compra: "..tostring(persistError))
+		PurchaseLog("denied",stage,requestSource,passport,model,detail)
+		return false,message
 	end
 
-	return true,"compra concluida",getVehicleEstoque(model)
+	local currentInfo = getVehicleFromCache(model)
+	local recheckOk,recheckOwned = pcall(hasVehicle,passport,model)
+	if ActiveCharacter(requestSource,passport) ~= passport then
+		return CancelPaidPurchase("character_revalidation","personagem desconectado; valor estornado",false,nil,"inactive character")
+	elseif not currentInfo or currentInfo.registered ~= true or NativeVehicleModel(model) ~= NativeModel or IsRemovedVehicle(model) then
+		return CancelPaidPurchase("catalog_revalidation","veiculo indisponivel; valor estornado",false,nil,"catalog changed")
+	elseif not recheckOk then
+		return CancelPaidPurchase("ownership_revalidation","propriedade nao validada; valor estornado",false,nil,recheckOwned)
+	elseif getVehicleEstoque(model) <= 0 or recheckOwned then
+		return CancelPaidPurchase("ownership_revalidation","compra concorrente recusada; valor estornado",false,nil,"stock or ownership changed")
+	end
+
+	local plateOk,plate = pcall(vRP.GeneratePlate)
+	if not plateOk or type(plate) ~= "string" or plate == "" then
+		return CancelPaidPurchase("plate_generation","nao foi possivel gerar a placa; valor estornado",false,nil,plate)
+	end
+
+	local insertOk,insertAffected = pcall(vRP.Update,"vehicles/addVehicles",{
+		Passport = passport,
+		Vehicle = model,
+		Plate = plate,
+		Weight = info.capacidade,
+		Work = 0
+	})
+
+	if not insertOk or tonumber(insertAffected) ~= 1 then
+		local confirmOk,insertedProperty = pcall(vRP.SingleQuery,"vehicles/PlateOwner",{
+			Passport = passport,
+			Vehicle = model,
+			Plate = plate
+		})
+		local propertyCreated = confirmOk and type(insertedProperty) == "table" and tonumber(insertedProperty.Passport) == passport and insertedProperty.Vehicle == model and insertedProperty.Plate == plate
+		return CancelPaidPurchase("vehicle_insert","propriedade nao criada; valor estornado",propertyCreated,plate,insertOk and insertAffected or insertAffected)
+	end
+
+	local readOk,property = pcall(vRP.SingleQuery,"vehicles/PlateOwner",{
+		Passport = passport,
+		Vehicle = model,
+		Plate = plate
+	})
+
+	if not readOk or type(property) ~= "table" or tonumber(property.Passport) ~= passport or property.Vehicle ~= model or property.Plate ~= plate then
+		return CancelPaidPurchase("property_confirmation","propriedade nao confirmada; valor estornado",true,plate,readOk and "invalid property" or property)
+	end
+
+	local stockOk,stockAffected = pcall(vRP.Update,"nation_conce/takeOneStock",{ vehicle = model })
+	if not stockOk or tonumber(stockAffected) ~= 1 then
+		return CancelPaidPurchase("stock_update","estoque indisponivel; valor estornado",true,plate,stockOk and stockAffected or stockAffected)
+	end
+
+	local stock = UpdatePurchasedStockCache(model)
+	local cacheOk,cacheError = pcall(addUserVehicle,passport,info)
+	if not cacheOk then
+		PurchaseLog("warning","user_cache",requestSource,passport,model,cacheError)
+	end
+
+	registerPurchaseTax(passport,model,price)
+	PurchaseLog("success","complete",requestSource,passport,model,"affectedRows=1 native="..NativeModel)
+	return true,"compra concluida",stock
 end
 
 function func.buyVehicle(model,color)
-	local requestSource = source
-	model = type(model) == "string" and model:match("^%s*(.-)%s*$") or ""
+	local requestSource = tonumber(source)
+	model = NormalizeVehicleModel(model)
+	local passport = ActiveCharacter(requestSource)
 
 	print(("[nation_concessionaria] Compra solicitada: source=%s model=%s"):format(
 		tostring(requestSource),
 		tostring(model)
 	))
 
-	if model == "" then
+	if not passport then
+		return false,"personagem indisponivel"
+	elseif not model then
 		print(("[nation_concessionaria] Resultado da compra: state=false message=veiculo invalido"))
 		return false,"veiculo invalido"
+	elseif not AcquirePurchaseLock(passport,model) then
+		PurchaseLog("denied","lock",requestSource,passport,model,"operation already active")
+		return false,"compra ja esta em processamento"
 	end
 
-	local ok,state,message,extra = pcall(processVehiclePurchase,requestSource,model,color)
+	local ok,state,message,extra = pcall(processVehiclePurchase,requestSource,passport,model,color)
+	ReleasePurchaseLock(passport,model)
 	if not ok then
-		print(("[nation_concessionaria] Erro interno na compra: source=%s model=%s erro=%s"):format(
-			tostring(requestSource),
-			tostring(model),
-			tostring(state)
-		))
+		PurchaseLog("error","unhandled",requestSource,passport,model,state)
 		state = false
 		message = "erro interno ao processar a compra"
 		extra = nil

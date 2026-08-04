@@ -68,6 +68,7 @@ vRP.Prepare("vehicles/UserVehicles","SELECT * FROM vehicles WHERE Passport = @Pa
 vRP.Prepare("vehicles/Count","SELECT COUNT(Vehicle) FROM vehicles WHERE Vehicle = @Vehicle")
 vRP.Prepare("vehicles/PlateUsers","SELECT * FROM vehicles WHERE Plate = @Plate AND Vehicle = @Vehicle")
 vRP.Prepare("vehicles/removeVehicles","DELETE FROM vehicles WHERE Passport = @Passport AND Vehicle = @Vehicle")
+vRP.Prepare("vehicles/removeVehicleExact","DELETE FROM vehicles WHERE Passport = @Passport AND Vehicle = @Vehicle AND Plate = @Plate LIMIT 1")
 vRP.Prepare("vehicles/selectVehicles","SELECT * FROM vehicles WHERE Passport = @Passport AND Vehicle = @Vehicle")
 vRP.Prepare("vehicles/CoiloverVehicles","UPDATE vehicles SET Drift = 1 WHERE Vehicle = @Vehicle AND Plate = @Plate")
 vRP.Prepare("vehicles/SeatbeltVehicles","UPDATE vehicles SET Seatbelt = 1 WHERE Plate = @Plate AND Vehicle = @Vehicle")
