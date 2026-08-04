@@ -638,10 +638,10 @@ end
 
 local function registerPurchaseTax(Passport,model,price)
 	if GetResourceState("bank") == "started" then
-		pcall(function()
-			exports.bank:AddTaxes(Passport,"Concessionaria",price,"Compra do veiculo "..(exports.vrp:VehicleName(model) or model)..".")
-		end)
+		return exports.bank:AddTaxes(Passport,"Concessionaria",price,"Compra do veiculo "..(exports.vrp:VehicleName(model) or model)..".")
 	end
+
+	return true
 end
 
 local function UpdatePurchasedStockCache(model)
@@ -839,13 +839,26 @@ local function processVehiclePurchase(requestSource,passport,model,color)
 		return CancelPaidPurchase("stock_update","estoque indisponivel; valor estornado",true,plate,stockOk and stockAffected or stockAffected)
 	end
 
-	local stock = UpdatePurchasedStockCache(model)
-	local cacheOk,cacheError = pcall(addUserVehicle,passport,info)
-	if not cacheOk then
-		PurchaseLog("warning","user_cache",requestSource,passport,model,cacheError)
+	-- A propriedade confirmada e a baixa de estoque formam o ponto de commit da compra.
+	-- Falhas auxiliares depois daqui nunca desfazem nem recusam uma compra concluida.
+	local stock = math.max(parseInt(currentInfo.estoque or info.estoque or 0) - 1,0)
+	local stockCacheOk,stockCacheResult = pcall(UpdatePurchasedStockCache,model)
+	if stockCacheOk and type(stockCacheResult) == "number" then
+		stock = math.max(parseInt(stockCacheResult),0)
+	else
+		PurchaseLog("warning","stock_cache",requestSource,passport,model,"committed=true stock="..stock.." error="..tostring(stockCacheResult))
 	end
 
-	registerPurchaseTax(passport,model,price)
+	local cacheOk,cacheError = pcall(addUserVehicle,passport,info)
+	if not cacheOk then
+		PurchaseLog("warning","user_cache",requestSource,passport,model,"committed=true error="..tostring(cacheError))
+	end
+
+	local taxOk,taxResult = pcall(registerPurchaseTax,passport,model,price)
+	if not taxOk or taxResult == false then
+		PurchaseLog("critical","purchase_tax",requestSource,passport,model,"committed=true price="..price.." error="..tostring(taxResult))
+	end
+
 	PurchaseLog("success","complete",requestSource,passport,model,"affectedRows=1 native="..NativeModel)
 	return true,"compra concluida",stock
 end

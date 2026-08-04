@@ -298,6 +298,41 @@ local function SaleLog(Status,Stage,source,Passport,Name,Plate,Detail)
 	))
 end
 
+local function CleanupSoldVehicleData(source,Passport,Name,Plate)
+	local customOk,customError = pcall(vRP.RemSrvData,"LsCustoms:"..Passport..":"..Name)
+	if not customOk then
+		SaleLog("warning","customization_cleanup",source,Passport,Name,Plate,customError)
+	end
+
+	local nativeOk,NativeModel = pcall(function()
+		return exports.vrp:VehicleModel(Name)
+	end)
+
+	if not nativeOk then
+		SaleLog("warning","native_model_lookup",source,Passport,Name,Plate,NativeModel)
+	else
+		NativeModel = NormalizePropertyKey(NativeModel)
+		if NativeModel and NativeModel ~= Name then
+			local propertyOk,NativeProperty = pcall(vRP.SelectVehicle,Passport,NativeModel)
+			if not propertyOk then
+				SaleLog("warning","legacy_customization_lookup",source,Passport,Name,Plate,"native="..NativeModel.." lookup failed; preserved")
+			elseif type(NativeProperty) == "table" then
+				SaleLog("preserved","legacy_customization_cleanup",source,Passport,Name,Plate,"native="..NativeModel.." belongs to a distinct property")
+			else
+				local legacyOk,legacyError = pcall(vRP.RemSrvData,"LsCustoms:"..Passport..":"..NativeModel)
+				if not legacyOk then
+					SaleLog("warning","legacy_customization_cleanup",source,Passport,Name,Plate,"native="..NativeModel.." error="..tostring(legacyError))
+				end
+			end
+		end
+	end
+
+	local trunkOk,trunkError = pcall(vRP.RemSrvData,"Trunkchest:"..Passport..":"..Name)
+	if not trunkOk then
+		SaleLog("warning","trunk_cleanup",source,Passport,Name,Plate,trunkError)
+	end
+end
+
 local function IsWorkVehicle(Number,Model)
 	local Garage = Garages[Number]
 	if not Garage or not Garage.Name or not Works[Garage.Name] then
@@ -701,15 +736,7 @@ local function ProcessVehicleSale(source,Passport,Name)
 		return false,"falha critica no credito"
 	end
 
-	local customOk,customError = pcall(vRP.RemSrvData,"LsCustoms:"..Passport..":"..Name)
-	if not customOk then
-		SaleLog("warning","customization_cleanup",source,Passport,Name,Plate,customError)
-	end
-
-	local trunkOk,trunkError = pcall(vRP.RemSrvData,"Trunkchest:"..Passport..":"..Name)
-	if not trunkOk then
-		SaleLog("warning","trunk_cleanup",source,Passport,Name,Plate,trunkError)
-	end
+	CleanupSoldVehicleData(source,Passport,Name,Plate)
 
 	SaleLog("success","complete",source,Passport,Name,Plate,"affectedRows=1 credit="..Price)
 	TriggerClientEvent("Notify",source,VehicleName,"Veículo vendido com sucesso.","verde",5000)
