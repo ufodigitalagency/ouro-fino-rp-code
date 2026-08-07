@@ -146,6 +146,8 @@ local function anchorSessionVehicle(timeoutMs)
 end
 
 local function createStageTarget(stageIndex)
+    -- As etapas usam apenas o marcador + tecla E.
+    -- Removemos qualquer zona legada do target para evitar NUI/foco preso.
     removeStageTarget()
     if not CurrentSession or not anchorSessionVehicle(1000) then return false end
 
@@ -153,21 +155,6 @@ local function createStageTarget(stageIndex)
     if not stage then return false end
     CurrentStage = stage
     StageRequestPending = false
-
-    local coords = stageCoords(CurrentVehicle,stage)
-    exports.target:AddCircleZone(StageZone,coords,0.55,{
-        name = StageZone,
-        useZ = false
-    },{
-        Distance = 1.5,
-        options = {
-            {
-                event = "pombalDismantle:BeginCurrentStage",
-                label = stage.Label,
-                tunnel = "client"
-            }
-        }
-    })
     return true
 end
 
@@ -311,6 +298,19 @@ end)
 RegisterNetEvent("pombalDismantle:CancelCurrent",function()
     TriggerServerEvent("pombalDismantle:Cancel")
 end)
+
+RegisterCommand("desbugtarget",function()
+    if GetResourceState("target") == "started" then
+        TriggerEvent("target:Debug")
+    end
+
+    SetNuiFocus(false,false)
+    if SetNuiFocusKeepInput then
+        SetNuiFocusKeepInput(false)
+    end
+
+    notify("Foco de interacao liberado. Se o desmanche continuar ativo, aproxime-se da peca e pressione E.","verde")
+end,false)
 
 RegisterNetEvent("pombalDismantle:SessionStarted",function(data)
     if type(data) ~= "table" then return end
