@@ -421,7 +421,7 @@ CreateThread(function()
             if distance <= 25.0 then
                 sleep = 0
                 DrawMarker(20,coords.x,coords.y,coords.z + 0.35,0.0,0.0,0.0,0.0,180.0,0.0,0.32,0.32,0.32,225,35,45,220,true,true,2,false,nil,nil,false)
-                drawText3D(vector3(coords.x,coords.y,coords.z + 0.62),CurrentStage.Label)
+                drawText3D(vector3(coords.x,coords.y,coords.z + 0.62),("[E] %s"):format(CurrentStage.Label))
 
                 if distance <= 2.0 then
                     helpText(("Pressione ~INPUT_CONTEXT~ para ~r~%s"):format(CurrentStage.Label:lower()))
