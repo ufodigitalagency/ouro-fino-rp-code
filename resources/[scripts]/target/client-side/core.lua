@@ -469,6 +469,16 @@ function DisableActions()
 	if Focus then
 		DisableControlAction(0,1,true)
 		DisableControlAction(0,2,true)
+
+		-- Enquanto o cursor da NUI estiver ativo, impede o jogador de
+		-- sair do alcance do target e deixar o foco preso.
+		DisableControlAction(0,21,true)
+		DisableControlAction(0,30,true)
+		DisableControlAction(0,31,true)
+		DisableControlAction(0,32,true)
+		DisableControlAction(0,33,true)
+		DisableControlAction(0,34,true)
+		DisableControlAction(0,35,true)
 	end
 
 	for _,v in ipairs({ 18,55,76,22,23,24,25,75,140,141,142,143,243,257,263,311,102,179,203 }) do
