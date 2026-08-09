@@ -1,0 +1,64 @@
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 128px;
+    height: 128px;
+    margin: 0;
+    overflow: hidden;
+    background: transparent !important;
+}
+
+.status {
+    width: 128px;
+    height: 128px;
+    position: relative;
+    --progress: 1;
+    --ring-color: #9457df;
+}
+
+.ring {
+    position: absolute;
+    left: 15px;
+    top: 10px;
+    width: 98px;
+    height: 98px;
+    padding: 6px;
+    border-radius: 50%;
+    background: conic-gradient(var(--ring-color) calc(var(--progress) * 1turn), rgba(255,255,255,0.16) 0);
+    box-shadow: 0 2px 9px rgba(0,0,0,0.58);
+}
+
+.core {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+    border: 3px solid rgba(255,255,255,0.76);
+    border-radius: 50%;
+    background: rgba(23,20,28,0.92);
+}
+
+svg {
+    width: 52px;
+    height: 52px;
+    fill: #ffffff;
+}
+
+.count {
+    position: absolute;
+    top: 105px;
+    left: 0;
+    width: 128px;
+    color: #ffffff;
+    font: 700 22px Arial, sans-serif;
+    text-align: center;
+    text-shadow: 0 2px 3px rgba(0,0,0,0.85);
+}
+
+.status.active .ring {
+    --ring-color: #b563ff;
+    box-shadow: 0 0 11px rgba(181,99,255,0.68);
+}

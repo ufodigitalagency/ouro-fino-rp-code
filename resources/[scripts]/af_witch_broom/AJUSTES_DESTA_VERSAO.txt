@@ -1,0 +1,28 @@
+AF Witch Broom - ajustes desta versao
+
+1. Turbo
+- Cooldown anterior efetivo: 7,6 segundos (1,6 s de efeito + 6 s adicionais).
+- Novo intervalo total: 3,2 segundos entre ativacoes.
+- Depois de um turbo de 1,6 s, restam aproximadamente 1,6 s no HUD.
+
+2. Estabilidade no chao
+- A Nimbus visual agora tem dinamica propria desativada enquanto esta anexada.
+- Foi reforcada a ausencia de colisao entre a Nimbus visual e a Oppressor invisivel.
+- Foi adicionada recuperacao conservadora apenas quando o proxy esta quase parado,
+  muito proximo do solo e excessivamente inclinado.
+- As curvas normais e o voo nativo da Oppressor nao sao sobrescritos.
+
+Arquivos alterados:
+- config.lua
+- client.lua
+- server.lua
+- README.md
+
+Instalacao:
+1. Substitua a pasta af_witch_broom atual.
+2. No console do servidor, execute: restart af_witch_broom
+3. Teste o turbo X e curvas fechadas no solo.
+
+Ajustes opcionais em config.lua:
+- Config.Boost.CooldownMs
+- Config.GroundStability
