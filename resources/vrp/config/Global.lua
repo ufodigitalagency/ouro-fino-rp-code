@@ -70,6 +70,12 @@ Groups = {
 		Chat = true,
 		Max = 30
 	},
+	OFC = {
+		Permission = {
+			OFC = true
+		},
+		Hierarchy = { "Organizador de Eventos" }
+	},
 	Premium = {
 		Permission = {
 			Premium = true
