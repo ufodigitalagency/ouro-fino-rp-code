@@ -121,40 +121,25 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# ============================================
 # Backups de editores e assistentes
+# ============================================
+
 *.bak
 *.bak_*
 *.bak_codex
 
-# Patches temporários
+# ============================================
+# Patches temporÃ¡rios
+# ============================================
+
 *.diff
 *.patch
 
-# Backups temporários
-*.bak
-*.bak_*
-*.bak_codex
+# ============================================
+# CÃ³pias de mapas geradas em relatÃ³rios
+# ============================================
 
-# Patches temporários
-*.diff
-*.patch
-
-# Cópias de mapas geradas em relatórios de auditoria
 docs/relatorios/**/xml/
 docs/relatorios/**/stream/
-
-@"
-
-# Backups temporários
-*.bak
-*.bak_*
-*.bak_codex
-
-# Patches temporários
-*.diff
-*.patch
-
-# Cópias de mapas geradas em relatórios de auditoria
-docs/relatorios/**/xml/
-docs/relatorios/**/stream/
-"@ | Add-Content ".gitignore"
