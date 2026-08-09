@@ -1,0 +1,3 @@
+-- Este resource nao precisa de log remoto. As ferramentas de posicionamento
+-- imprimem o resultado somente no F8 do operador e nenhum evento de rede e
+-- registrado em producao.
