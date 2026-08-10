@@ -2,9 +2,9 @@
 
 Fundacao do sistema de CNH e autoescola do Ouro Fino RP.
 
-## Estado atual — Phase 1A
+## Estado atual — Phase 2C
 
-Esta fase adiciona somente persistencia e API server-side.
+A fundacao persistente server-side esta ativa e o cliente possui diagnostico read-only de cinto, motor e farois.
 
 Ainda NAO:
 
@@ -13,7 +13,6 @@ Ainda NAO:
 - entrega Panto apos aprovacao;
 - cria prova pratica;
 - cria NPC ou UI da autoescola;
-- consulta o estado real do cinto;
 - altera controles do veiculo.
 
 ## Persistencia
@@ -62,3 +61,11 @@ ou:
 `ofcnhstatus <passaporte> B`
 
 O comando e somente leitura.
+
+### Cliente
+
+No console F8 do jogo:
+
+`ofcnhdiag`
+
+O diagnostico e somente leitura. Ele informa se o jogador esta em veiculo, se esta no banco do motorista, estado real do cinto via export do `hud`, motor, farois, farol alto e velocidade aproximada em km/h.
