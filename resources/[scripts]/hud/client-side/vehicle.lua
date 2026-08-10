@@ -13,6 +13,7 @@ local EngineHealth = 0
 local ActualVehicle = nil
 local BroomHudHidden = false
 local PauseMapClipActive = false
+local MinimapScaleform = RequestScaleformMovie("minimap")
 
 local function HideVehicleHud()
 	ActualVehicle = nil
@@ -35,6 +36,12 @@ CreateThread(function()
 		local TimeDistance = 500
 
 		if Loadout then
+			if HasScaleformMovieLoaded(MinimapScaleform) then
+				BeginScaleformMovieMethod(MinimapScaleform,"SETUP_HEALTH_ARMOUR")
+				ScaleformMovieMethodAddParamInt(3)
+				EndScaleformMovieMethod()
+			end
+
 			local PauseActive = IsPauseMenuActive()
 
 			if PauseActive ~= PauseMapClipActive then

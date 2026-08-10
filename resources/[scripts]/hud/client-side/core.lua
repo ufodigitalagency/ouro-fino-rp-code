@@ -22,9 +22,7 @@ Display = false
 local Hood = false
 local Gemstone = 0
 local Pause = false
-local Road = "Roads"
 local Underwater = false
-local Crossing = "Crossing"
 
 local function RemoveHood()
 	if not Hood then
@@ -40,49 +38,6 @@ function Lil.RemoveHood()
 	return RemoveHood()
 end
 
-local MinasLocations = {
-	{ Name = "Ouro Fino", X = 215.0, Y = -920.0, Radius = 900.0, Roads = { "Centro", "Praca Matriz", "Rua Treze de Maio", "Avenida Cyro Goncalves" } },
-	{ Name = "Ouro Verde", X = -520.0, Y = -1150.0, Radius = 850.0, Roads = { "Jardim Ouro Verde", "Rua das Palmeiras", "Avenida Minas Gerais" } },
-	{ Name = "Crisolia", X = 950.0, Y = -1650.0, Radius = 900.0, Roads = { "Estrada de Crisolia", "Rua do Comercio", "Travessa Santa Rita" } },
-	{ Name = "Centro", X = -50.0, Y = -520.0, Radius = 700.0, Roads = { "Rua Direita", "Avenida Central", "Praca Central" } },
-	{ Name = "Sao Judas", X = -850.0, Y = -450.0, Radius = 850.0, Roads = { "Rua Sao Judas", "Rua das Flores", "Avenida Sao Jose" } },
-	{ Name = "Jardim Terezinha", X = 1150.0, Y = -450.0, Radius = 850.0, Roads = { "Rua Terezinha", "Alameda dos Ipes", "Rua dos Cravos" } },
-	{ Name = "Jardim Centenario", X = -1450.0, Y = -160.0, Radius = 950.0, Roads = { "Avenida Centenario", "Rua Nova", "Rua dos Expedicionarios" } },
-	{ Name = "Palomos", X = 1600.0, Y = 220.0, Radius = 1000.0, Roads = { "Estrada dos Palomos", "Rua Rural", "Caminho da Serra" } },
-	{ Name = "Pombal", X = -1800.0, Y = 950.0, Radius = 1200.0, Roads = { "Area Rural", "Estrada do Pombal", "Caminho da Porteira" } },
-	{ Name = "BNH", X = 650.0, Y = 850.0, Radius = 900.0, Roads = { "Rua do BNH", "Avenida Habitacional", "Rua das Acacias" } },
-	{ Name = "Monjolinho", X = -650.0, Y = 1450.0, Radius = 1050.0, Roads = { "Estrada do Monjolinho", "Rua do Ribeirao", "Caminho do Sitio" } },
-	{ Name = "Santa Izabel", X = 1350.0, Y = 1600.0, Radius = 1100.0, Roads = { "Rua Santa Izabel", "Avenida da Capela", "Rua Bela Vista" } },
-	{ Name = "Pouso Alegre", X = -2300.0, Y = 2450.0, Radius = 1350.0, Roads = { "Avenida Pouso Alegre", "Rua Sapucai", "Rodovia Sul de Minas" } },
-	{ Name = "Itapira", X = 1850.0, Y = 2850.0, Radius = 1350.0, Roads = { "Rua Itapira", "Avenida Paulista", "Estrada Municipal" } },
-	{ Name = "Campinas", X = -850.0, Y = 3300.0, Radius = 1500.0, Roads = { "Avenida Campinas", "Rua Anhanguera", "Anel Viario" } },
-	{ Name = "Pocos de Caldas", X = 2450.0, Y = 4150.0, Radius = 1500.0, Roads = { "Rua das Aguas", "Avenida Termal", "Serra de Sao Domingos" } },
-	{ Name = "Belo Horizonte", X = -1550.0, Y = 4300.0, Radius = 1500.0, Roads = { "Avenida Afonso Pena", "Praca Sete", "Contorno" } },
-	{ Name = "Serra Negra", X = 450.0, Y = 5400.0, Radius = 1600.0, Roads = { "Estrada da Serra", "Rua das Fontes", "Mirante" } }
-}
-
-local function MinasLocation(Coords)
-	local Selected = MinasLocations[1]
-	local SelectedDistance = 999999999.0
-
-	for _,Location in ipairs(MinasLocations) do
-		local Distance = math.sqrt(((Coords.x - Location.X) * (Coords.x - Location.X)) + ((Coords.y - Location.Y) * (Coords.y - Location.Y)))
-		if Distance < SelectedDistance and Distance <= Location.Radius then
-			Selected = Location
-			SelectedDistance = Distance
-		else
-			local Current = math.sqrt(((Coords.x - Selected.X) * (Coords.x - Selected.X)) + ((Coords.y - Selected.Y) * (Coords.y - Selected.Y)))
-			if SelectedDistance == 999999999.0 and Distance < Current then
-			Selected = Location
-			end
-		end
-	end
-
-	local Roads = Selected.Roads or { "Rua Principal" }
-	local Index = (math.floor(math.abs(Coords.x + Coords.y) / 180.0) % #Roads) + 1
-
-	return Selected.Name,Roads[Index]
-end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- PRINCIPAL
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -152,10 +107,8 @@ CreateThread(function()
 						Pause = false
 					end
 
-					local Coords = GetEntityCoords(Ped)
 					local Armouring = GetPedArmour(Ped)
 					local Healing = GetEntityHealth(Ped) - 100
-					local FullRoad,FullCross = MinasLocation(Coords)
 
 					if GetEntityMaxHealth(Ped) ~= 200 then
 						if Health ~= parseInt(Healing * 0.66) then
@@ -194,15 +147,6 @@ CreateThread(function()
 						Armour = Armouring
 					end
 
-					if FullRoad ~= "" and Road ~= FullRoad then
-						SendNUIMessage({ Action = "Road", Payload = FullRoad })
-						Road = FullRoad
-					end
-
-					if FullCross ~= "" and Crossing ~= FullCross then
-						SendNUIMessage({ Action = "Crossing", Payload = FullCross })
-						Crossing = FullCross
-					end
 
 					SendNUIMessage({ Action = "Clock", Payload = { GlobalState.Hours,GlobalState.Minutes } })
 				end
