@@ -23,6 +23,19 @@ local Hood = false
 local Gemstone = 0
 local Pause = false
 local Underwater = false
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- NATIVE LOCATION HUD
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- Remove apenas os nomes nativos de area/bairro e rua exibidos junto ao minimapa.
+-- Componentes GTA/FiveM: 7 = AREA_NAME, 9 = STREET_NAME.
+CreateThread(function()
+	while true do
+		HideHudComponentThisFrame(7)
+		HideHudComponentThisFrame(9)
+
+		Wait(0)
+	end
+end)
 
 local function RemoveHood()
 	if not Hood then
