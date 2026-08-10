@@ -2,13 +2,14 @@
 
 Snapshot generated from the active Base before the CNH feature branch.
 
-- Generated: 2026-08-10 18:21:59 -03:00
+- Generated: 2026-08-10 19:08:24 -03:00
 - Git branch: `chore/pre-cnh-stable-consolidation`
-- Git HEAD: `69f60ece0f49a8500bf7622554192815a1249bd2`
+- Git HEAD: `0202ba5e9e5977a4bcbc9357f651db6940ebdf17`
 - Active Base: `D:\meu-server-gta\Base`
 - Resource roots: 151
 - Valid started resources: 145
-- Content hashing: SHA-256 per resource inventory
+- Content hashing: SHA-256 per stable resource baseline
+- Volatile baseline exclusion: `[scripts]/inventory/mount_debug.log` (runtime-generated debug log; excluded from Files/Size/SHA-256).
 
 > `OriginLicense = UNVERIFIED` means this manifest does not assert redistribution rights. Preserve original package licenses and verify third-party provenance separately.
 
@@ -76,7 +77,7 @@ Snapshot generated from the active Base before the CNH feature branch.
 | [scripts]/hoverfy | RUNTIME_EXTERNAL | start [scripts] [GROUP] line 43 | 5 | 0.08 | 0 | False | `C4FCEFAA72DCFD3F…` |
 | [scripts]/hud | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 21 | 0.77 | 0 | True | `244E297349F8C038…` |
 | [scripts]/inspect | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 3 | 0.02 | 0 | True | `B2133CC9B5A6712E…` |
-| [scripts]/inventory | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 48 | 1.38 | 0 | True | `87EF41AF373CBD3D…` |
+| [scripts]/inventory | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 47 | 1.35 | 0 | True | `D42E46C1A4D03A2A…` |
 | [scripts]/keyboard | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 5 | 0.13 | 0 | True | `EBEC9D95D4C9F20C…` |
 | [scripts]/lettergame | RUNTIME_EXTERNAL | start [scripts] [GROUP] line 43 | 9 | 0.28 | 0 | False | `84F3EC2F2BF02D6E…` |
 | [scripts]/lscustoms | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 15 | 0.98 | 0 | True | `D7D7F8B5790086E4…` |
@@ -113,7 +114,7 @@ Snapshot generated from the active Base before the CNH feature branch.
 | [scripts]/sao_judas_operations | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 4 | 0.05 | 0 | True | `0C109363109691DF…` |
 | [scripts]/sao_judas_street_sales | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 14 | 0.1 | 0 | True | `102F44865F5EC179…` |
 | [scripts]/securitycam | RUNTIME_EXTERNAL | start [scripts] [GROUP] line 43 | 4 | 0.01 | 0 | False | `DC785DCAB3E9A808…` |
-| [scripts]/shops | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 4 | 0.05 | 0 | True | `4ED112D0902C621C…` |
+| [scripts]/shops | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 4 | 0.05 | 0 | True | `DB8513FF8E79E052…` |
 | [scripts]/skinshop | TRACKED_SOURCE | start [scripts] [GROUP] line 43 | 7 | 0.36 | 0 | True | `C37FA73156C0024F…` |
 | [scripts]/skinweapon | RUNTIME_EXTERNAL | start [scripts] [GROUP] line 43 | 6 | 0.3 | 0 | False | `A3A316EA32D4D516…` |
 | [scripts]/slotmachine | RUNTIME_EXTERNAL | start [scripts] [GROUP] line 43 | 4 | 0.01 | 0 | False | `18949B8784E56FEB…` |
@@ -306,4 +307,5 @@ These are textual hints extracted from manifests; they are not a full dependency
 - `[dev]` is intentionally not started by `server.cfg`.
 - `[vehicles]/1016urus` and `[vehicles]/2f2fgtr34` are retained but have no manifest in their root and are classified as incomplete/non-loadable.
 - Heavy third-party assets remain outside Git by design.
+- Runtime-generated debug file `[scripts]/inventory/mount_debug.log` is intentionally excluded from baseline metrics and fingerprints so server activity cannot mutate the documented baseline.
 - Before tagging `v0.9-pre-cnh`, complete runtime smoke tests and the controlled `shops` reconciliation.
