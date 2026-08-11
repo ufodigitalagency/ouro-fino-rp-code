@@ -13,6 +13,19 @@ local ExamSessions = {}
 local ActivePassports = {}
 local SpawnReservations = {}
 local RateLimits = {}
+local InstructorNpc = 0
+local InstructorNetwork = 0
+local InstructorNpcCreating = false
+local InstructorNpcCreatedAt = 0
+local InstructorNpcMissingChecks = 0
+local InstructorNpcGeneration = 0
+local InstructorOwnerSource = 0
+local InstructorSetupRevision = 0
+local InstructorOwnerConfigured = false
+local InstructorNextConfigureAt = 0
+local NextInstructorSpawnAt = 0
+local InstructorRespawnReason = "server_start"
+local ResourceStopping = false
 
 local VALID_STATUS = {
     active = true,
@@ -52,6 +65,202 @@ local function debugLog(Message)
         print("[of_drivingschool] "..Message)
     end
 end
+
+local function instructorValid(Ped)
+    Ped = Ped or InstructorNpc
+    return Ped ~= 0 and DoesEntityExist(Ped) and GetEntityType(Ped) == 1 and GetEntityModel(Ped) == GetHashKey(Config.Instructor.Model)
+end
+
+local function resetInstructorOwner(ResetRevision)
+    InstructorOwnerSource = 0
+    if ResetRevision then
+        InstructorSetupRevision = 0
+    end
+    InstructorOwnerConfigured = false
+    InstructorNextConfigureAt = 0
+end
+
+local function deleteInstructor(Ped)
+    Ped = Ped or InstructorNpc
+    if Ped ~= 0 and DoesEntityExist(Ped) then
+        local Success,Error = pcall(DeleteEntity,Ped)
+        if not Success then
+            debugLog(("instructor_delete_failed entity=%s error=%s"):format(tostring(Ped),tostring(Error)))
+        end
+    end
+
+    if Ped == InstructorNpc then
+        InstructorNpc = 0
+        InstructorNetwork = 0
+        InstructorNpcCreatedAt = 0
+        InstructorNpcMissingChecks = 0
+        resetInstructorOwner(true)
+    end
+end
+
+
+local function failInstructorCreation(Ped,Reason)
+    deleteInstructor(Ped)
+    InstructorNpcCreating = false
+    NextInstructorSpawnAt = GetGameTimer() + (tonumber(Config.Instructor.RespawnDebounceMs) or 5000)
+    InstructorRespawnReason = tostring(Reason or "creation_failed")
+    debugLog(("instructor_creation_failed reason=%s retry_in_ms=%s"):format(
+        tostring(Reason),
+        tostring(tonumber(Config.Instructor.RespawnDebounceMs) or 5000)
+    ))
+    return false
+end
+
+local function createInstructor(Reason)
+    if ResourceStopping then
+        return false
+    end
+
+    if instructorValid() then
+        return true
+    end
+
+    if InstructorNpc ~= 0 or InstructorNpcCreating or GetGameTimer() < NextInstructorSpawnAt then
+        return false
+    end
+
+    InstructorNpcCreating = true
+    local Coords = Config.Instructor.Coords
+    local SpawnZ = tonumber(Config.Instructor.SpawnZ) or Coords.z
+    local Model = GetHashKey(Config.Instructor.Model)
+    debugLog(("instructor_creation_attempt reason=%s model=%s coords=%.4f,%.4f,%.4f heading=%.2f"):format(
+        tostring(Reason or "server_start"),
+        tostring(Model),
+        Coords.x,
+        Coords.y,
+        SpawnZ,
+        Coords.w
+    ))
+
+    local CreateSuccess,Ped = pcall(CreatePed,4,Model,Coords.x,Coords.y,SpawnZ,Coords.w,true,true)
+    if not CreateSuccess or not Ped or Ped == 0 then
+        return failInstructorCreation(0,CreateSuccess and "create_ped_returned_zero" or "create_ped_failed:"..tostring(Ped))
+    end
+
+    local TimeoutAt = GetGameTimer() + (tonumber(Config.Instructor.CreateTimeoutMs) or 5000)
+    while not ResourceStopping and not DoesEntityExist(Ped) and GetGameTimer() < TimeoutAt do
+        Wait(50)
+    end
+
+    if ResourceStopping or not DoesEntityExist(Ped) then
+        return failInstructorCreation(Ped,ResourceStopping and "resource_stopping" or "entity_creation_timeout")
+    end
+
+    local Network = NetworkGetNetworkIdFromEntity(Ped)
+    while not ResourceStopping and DoesEntityExist(Ped) and (not Network or Network == 0) and GetGameTimer() < TimeoutAt do
+        Wait(50)
+        Network = NetworkGetNetworkIdFromEntity(Ped)
+    end
+
+    if ResourceStopping or not Network or Network == 0 then
+        return failInstructorCreation(Ped,ResourceStopping and "resource_stopping" or "network_id_timeout")
+    end
+
+    local OrphanSuccess,OrphanError = pcall(SetEntityOrphanMode,Ped,2)
+    if not OrphanSuccess then
+        return failInstructorCreation(Ped,"orphan_mode_failed:"..tostring(OrphanError))
+    end
+
+    InstructorNpcGeneration = InstructorNpcGeneration + 1
+    local StateSuccess,StateError = pcall(function()
+        local State = Entity(Ped).state
+        State:set("OFCNHInstructorGeneration",InstructorNpcGeneration,true)
+        State:set("OFCNHInstructor",true,true)
+    end)
+    if not StateSuccess then
+        return failInstructorCreation(Ped,"state_bag_failed:"..tostring(StateError))
+    end
+
+    InstructorNpc = Ped
+    InstructorNetwork = Network
+    InstructorNpcCreatedAt = GetGameTimer()
+    InstructorNpcMissingChecks = 0
+    InstructorNpcCreating = false
+    NextInstructorSpawnAt = 0
+    InstructorRespawnReason = nil
+    resetInstructorOwner(true)
+    debugLog(("instructor_created entity=%s network=%s generation=%s orphan_mode=KeepEntity spawn_z=%.4f"):format(
+        InstructorNpc,
+        InstructorNetwork,
+        InstructorNpcGeneration,
+        SpawnZ
+    ))
+    return true
+end
+
+local function configureInstructorOwner()
+    if not instructorValid() then
+        return
+    end
+
+    local Owner = tonumber(NetworkGetEntityOwner(InstructorNpc)) or -1
+    if Owner <= 0 then
+        if InstructorOwnerSource ~= 0 then
+            debugLog(("instructor_owner_released entity=%s previous_owner=%s"):format(InstructorNpc,InstructorOwnerSource))
+            resetInstructorOwner(false)
+        end
+        return
+    end
+
+    if Owner ~= InstructorOwnerSource then
+        InstructorOwnerSource = Owner
+        InstructorSetupRevision = InstructorSetupRevision + 1
+        InstructorOwnerConfigured = false
+        InstructorNextConfigureAt = 0
+        debugLog(("instructor_owner_changed entity=%s network=%s owner=%s revision=%s"):format(
+            InstructorNpc,
+            InstructorNetwork,
+            InstructorOwnerSource,
+            InstructorSetupRevision
+        ))
+    end
+
+    if not InstructorOwnerConfigured and GetGameTimer() >= InstructorNextConfigureAt then
+        local StatePublished,StateError = pcall(function()
+            Entity(InstructorNpc).state:set("OFCNHInstructorSetupRevision",InstructorSetupRevision,true)
+        end)
+        if StatePublished then
+            TriggerClientEvent("of_drivingschool:ConfigureInstructor",InstructorOwnerSource,InstructorNetwork,InstructorNpcGeneration,InstructorSetupRevision)
+        else
+            debugLog(("instructor_setup_state_failed entity=%s owner=%s revision=%s error=%s"):format(
+                InstructorNpc,
+                InstructorOwnerSource,
+                InstructorSetupRevision,
+                tostring(StateError)
+            ))
+        end
+        InstructorNextConfigureAt = GetGameTimer() + (tonumber(Config.Instructor.ConfigureRetryMs) or 5000)
+    end
+end
+
+RegisterNetEvent("of_drivingschool:InstructorConfigured",function(Network,Generation,Revision)
+    local PlayerSource = source
+    if not instructorValid() or PlayerSource ~= InstructorOwnerSource then
+        return
+    end
+
+    if tonumber(Network) ~= InstructorNetwork or tonumber(Generation) ~= InstructorNpcGeneration or tonumber(Revision) ~= InstructorSetupRevision then
+        return
+    end
+
+    if tonumber(NetworkGetEntityOwner(InstructorNpc)) ~= PlayerSource then
+        return
+    end
+
+    InstructorOwnerConfigured = true
+    debugLog(("instructor_owner_configured entity=%s network=%s owner=%s generation=%s revision=%s"):format(
+        InstructorNpc,
+        InstructorNetwork,
+        PlayerSource,
+        InstructorNpcGeneration,
+        InstructorSetupRevision
+    ))
+end)
 
 local function normalizePassport(Passport)
     Passport = tonumber(Passport)
@@ -1098,6 +1307,54 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    while not ResourceStopping do
+        if instructorValid() then
+            if InstructorNpcMissingChecks > 0 then
+                debugLog(("instructor_watchdog_recovered entity=%s after_missing_checks=%s"):format(InstructorNpc,InstructorNpcMissingChecks))
+            end
+
+            InstructorNpcMissingChecks = 0
+            configureInstructorOwner()
+        elseif InstructorNpc ~= 0 then
+            local MissingThreshold = math.max(3,tonumber(Config.Instructor.MissingChecksBeforeRespawn) or 3)
+            InstructorNpcMissingChecks = InstructorNpcMissingChecks + 1
+            local ElapsedMs = InstructorNpcCreatedAt > 0 and math.max(0,GetGameTimer() - InstructorNpcCreatedAt) or 0
+            debugLog(("instructor_watchdog_missing entity=%s network=%s check=%s/%s elapsed_since_creation_ms=%s"):format(
+                tostring(InstructorNpc),
+                tostring(InstructorNetwork),
+                InstructorNpcMissingChecks,
+                MissingThreshold,
+                ElapsedMs
+            ))
+
+            if InstructorNpcMissingChecks >= MissingThreshold then
+                if instructorValid() then
+                    InstructorNpcMissingChecks = 0
+                    debugLog(("instructor_watchdog_recovered entity=%s during_confirmation=true"):format(InstructorNpc))
+                else
+                    debugLog(("instructor_watchdog_lost_confirmed entity=%s network=%s elapsed_since_creation_ms=%s recreation_reason=consecutive_missing_checks"):format(
+                        tostring(InstructorNpc),
+                        tostring(InstructorNetwork),
+                        ElapsedMs
+                    ))
+                    InstructorNpc = 0
+                    InstructorNetwork = 0
+                    InstructorNpcCreatedAt = 0
+                    InstructorNpcMissingChecks = 0
+                    InstructorRespawnReason = "watchdog_consecutive_missing_checks"
+                    NextInstructorSpawnAt = GetGameTimer() + (tonumber(Config.Instructor.RespawnDebounceMs) or 5000)
+                    resetInstructorOwner(true)
+                end
+            end
+        elseif not InstructorNpcCreating and GetGameTimer() >= NextInstructorSpawnAt then
+            createInstructor(InstructorRespawnReason)
+        end
+
+        Wait(math.max(500,tonumber(Config.Instructor.HealthCheckMs) or 2000))
+    end
+end)
+
+CreateThread(function()
     while true do
         Wait(Config.Exam.ServerWatchdogMs)
 
@@ -1140,6 +1397,9 @@ AddEventHandler("onResourceStop",function(ResourceName)
     if ResourceName ~= GetCurrentResourceName() then
         return
     end
+
+    ResourceStopping = true
+    deleteInstructor(InstructorNpc)
 
     local Sources = {}
     for PlayerSource in pairs(ExamSessions) do

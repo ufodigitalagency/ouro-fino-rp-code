@@ -28,10 +28,12 @@ Config.Admin = {
 
 Config.Instructor = {
     Coords = vec4(-2290.48,364.09,174.60,36.86),
+    SpawnZ = 173.6017,
     Model = "s_m_m_autoshop_01",
     Scenario = "WORLD_HUMAN_CLIPBOARD",
-    ModelTimeoutMs = 10000,
-    GroundResolveTimeoutMs = 5000,
+    CreateTimeoutMs = 5000,
+    ConfigureTimeoutMs = 5000,
+    ConfigureRetryMs = 5000,
     TargetRadius = 0.85,
     TargetDistance = 2.0,
     RespawnDebounceMs = 5000,

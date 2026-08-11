@@ -2,14 +2,10 @@ local Tunnel = module("vrp","lib/Tunnel")
 local vSERVER = Tunnel.getInterface("of_drivingschool")
 
 local InstructorTarget = "OFCNH:Instructor"
-local InstructorNpc = 0
-local InstructorNpcSpawning = false
 local InstructorTargetRegistered = false
 local NextInstructorTargetLogAt = 0
-local NextInstructorSpawnAt = 0
-local InstructorNpcCreatedAt = 0
-local InstructorNpcMissingChecks = 0
-local InstructorNpcRespawnReason = "initial_start"
+local InstructorSetupInProgress = {}
+local InstructorConfiguredSetup = {}
 local ActiveExam = nil
 local StartBusy = false
 local ResourceStopping = false
@@ -98,184 +94,143 @@ local function loadModel(ModelName,TimeoutMs)
     return HasModelLoaded(Model) and Model or nil
 end
 
-local function deletePedSafe(Entity)
-    if Entity and Entity ~= 0 and DoesEntityExist(Entity) then
-        SetEntityAsMissionEntity(Entity,true,true)
-        DeletePed(Entity)
-        if DoesEntityExist(Entity) then
-            DeleteEntity(Entity)
+local function acknowledgeInstructor(Network,Generation,Revision)
+    TriggerServerEvent("of_drivingschool:InstructorConfigured",Network,Generation,Revision)
+end
+
+local function configureNetworkedInstructor(Network,Generation,Revision,Reason)
+    Network = math.floor(tonumber(Network) or 0)
+    Generation = math.floor(tonumber(Generation) or 0)
+    Revision = math.floor(tonumber(Revision) or 0)
+    if ResourceStopping or Network <= 0 or Generation <= 0 or Revision <= 0 then
+        return
+    end
+
+    local SetupToken = ("%s:%s"):format(Generation,Revision)
+    if InstructorConfiguredSetup[Network] == SetupToken then
+        acknowledgeInstructor(Network,Generation,Revision)
+        return
+    end
+
+    if InstructorSetupInProgress[Network] == SetupToken then
+        return
+    end
+
+    InstructorSetupInProgress[Network] = SetupToken
+    CreateThread(function()
+        local TimeoutAt = GetGameTimer() + (tonumber(Config.Instructor.ConfigureTimeoutMs) or 5000)
+        local Ped = NetworkGetEntityFromNetworkId(Network)
+
+        while not ResourceStopping and (Ped == 0 or not DoesEntityExist(Ped)) and GetGameTimer() < TimeoutAt do
+            Wait(100)
+            Ped = NetworkGetEntityFromNetworkId(Network)
         end
-    end
 
-    return 0
-end
-
-local function logInstructorSnapshot(Stage,Entity)
-    if not Config.Debug then
-        return
-    end
-
-    if Entity == 0 or not DoesEntityExist(Entity) then
-        debugLog(("instructor_snapshot stage=%s entity=%s exists=false health=unavailable alpha=unavailable visible=unavailable collision_loaded=unavailable frozen=unavailable"):format(Stage,tostring(Entity)))
-        return
-    end
-
-    local Coords = GetEntityCoords(Entity)
-    debugLog(("instructor_snapshot stage=%s entity=%s exists=true model=%s networked=%s coords=%.4f,%.4f,%.4f heading=%.2f health=%s alpha=%s visible=%s collision_loaded=%s frozen=%s"):format(
-        Stage,
-        tostring(Entity),
-        tostring(GetEntityModel(Entity)),
-        boolText(NetworkGetEntityIsNetworked(Entity)),
-        Coords.x,
-        Coords.y,
-        Coords.z,
-        GetEntityHeading(Entity),
-        tostring(GetEntityHealth(Entity)),
-        tostring(GetEntityAlpha(Entity)),
-        boolText(IsEntityVisible(Entity)),
-        boolText(HasCollisionLoadedAroundEntity(Entity)),
-        boolText(IsEntityPositionFrozen(Entity))
-    ))
-end
-
-local function resolveInstructorGround(Coords)
-    local ProbeOffsets = { 1.0,5.0,20.0 }
-    local TimeoutAt = GetGameTimer() + (tonumber(Config.Instructor.GroundResolveTimeoutMs) or 5000)
-
-    repeat
-        RequestCollisionAtCoord(Coords.x,Coords.y,Coords.z)
-
-        for _,Offset in ipairs(ProbeOffsets) do
-            local ProbeZ = Coords.z + Offset
-            local Found,GroundZ = GetGroundZFor_3dCoord(Coords.x,Coords.y,ProbeZ,false)
-            if nativeBool(Found) then
-                debugLog(("instructor_ground_resolved configured_z=%.4f probe_z=%.4f ground_z=%.4f"):format(Coords.z,ProbeZ,GroundZ))
-                return GroundZ,true
+        local function finishSetup()
+            if InstructorSetupInProgress[Network] == SetupToken then
+                InstructorSetupInProgress[Network] = nil
             end
         end
 
-        Wait(100)
-    until ResourceStopping or GetGameTimer() >= TimeoutAt
-
-    print(("[of_drivingschool] WARN instructor_ground_unresolved; using configured_z=%.4f"):format(Coords.z))
-    return Coords.z,false
-end
-
-local function configureInstructor(Entity,Coords,GroundZ)
-    SetEntityAsMissionEntity(Entity,true,true)
-
-    Wait(0)
-    if ResourceStopping or not DoesEntityExist(Entity) then
-        return false,"entity_lost_after_creation"
-    end
-
-    SetEntityCoordsNoOffset(Entity,Coords.x,Coords.y,GroundZ,false,false,false)
-    SetEntityHeading(Entity,Coords.w)
-    logInstructorSnapshot("placed",Entity)
-
-    SetEntityInvincible(Entity,true)
-    SetEntityCanBeDamaged(Entity,false)
-    SetBlockingOfNonTemporaryEvents(Entity,true)
-    TaskSetBlockingOfNonTemporaryEvents(Entity,true)
-    SetPedCanRagdoll(Entity,false)
-    SetPedDiesWhenInjured(Entity,false)
-    SetPedFleeAttributes(Entity,0,false)
-
-    if Config.Instructor.Scenario and Config.Instructor.Scenario ~= "" then
-        TaskStartScenarioInPlace(Entity,Config.Instructor.Scenario,0,true)
-        SetPedKeepTask(Entity,true)
-    end
-
-    Wait(0)
-    if ResourceStopping or not DoesEntityExist(Entity) then
-        return false,"entity_lost_before_freeze"
-    end
-
-    SetEntityCoordsNoOffset(Entity,Coords.x,Coords.y,GroundZ,false,false,false)
-    SetEntityHeading(Entity,Coords.w)
-    FreezeEntityPosition(Entity,true)
-    logInstructorSnapshot("frozen",Entity)
-    return true,nil
-end
-
-local function createInstructorNpc(Reason)
-    if ResourceStopping then
-        return false
-    end
-
-    if InstructorNpc ~= 0 then
-        return DoesEntityExist(InstructorNpc)
-    end
-
-    if InstructorNpcSpawning or GetGameTimer() < NextInstructorSpawnAt then
-        return false
-    end
-
-    InstructorNpcSpawning = true
-    Reason = Reason or InstructorNpcRespawnReason or "health_watchdog"
-    debugLog(("instructor_creation_attempt reason=%s configured_coords=%.4f,%.4f,%.4f heading=%.2f"):format(
-        tostring(Reason),
-        Config.Instructor.Coords.x,
-        Config.Instructor.Coords.y,
-        Config.Instructor.Coords.z,
-        Config.Instructor.Coords.w
-    ))
-
-    local Model = loadModel(Config.Instructor.Model,Config.Instructor.ModelTimeoutMs)
-    if not Model then
-        InstructorNpcSpawning = false
-        NextInstructorSpawnAt = GetGameTimer() + Config.Instructor.RespawnDebounceMs
-        InstructorNpcRespawnReason = "model_load_failed"
-        print(("[of_drivingschool] Modelo fixo do instrutor indisponivel: %s"):format(tostring(Config.Instructor.Model)))
-        return false
-    end
-
-    debugLog(("instructor_model_loaded model_name=%s model_hash=%s"):format(tostring(Config.Instructor.Model),tostring(Model)))
-
-    local Coords = Config.Instructor.Coords
-    local GroundZ,GroundResolved = resolveInstructorGround(Coords)
-    RequestCollisionAtCoord(Coords.x,Coords.y,GroundZ)
-    local Entity = CreatePed(4,Model,Coords.x,Coords.y,GroundZ,Coords.w,false,false)
-    SetModelAsNoLongerNeeded(Model)
-
-    if ResourceStopping or Entity == 0 or not DoesEntityExist(Entity) then
-        if Entity and Entity ~= 0 then
-            deletePedSafe(Entity)
+        if ResourceStopping or Ped == 0 or not DoesEntityExist(Ped) or not NetworkGetEntityIsNetworked(Ped) then
+            finishSetup()
+            return
         end
 
-        InstructorNpcSpawning = false
-        NextInstructorSpawnAt = GetGameTimer() + Config.Instructor.RespawnDebounceMs
-        InstructorNpcRespawnReason = "create_ped_failed"
-        return false
-    end
+        if not NetworkHasControlOfEntity(Ped) then
+            debugLog(("instructor_setup_deferred network=%s generation=%s reason=no_control"):format(Network,Generation))
+            finishSetup()
+            return
+        end
 
-    InstructorNpc = Entity
-    InstructorNpcCreatedAt = GetGameTimer()
-    debugLog(("instructor_entity_created entity=%s model=%s networked=%s ground_resolved=%s"):format(
-        tostring(InstructorNpc),
-        tostring(GetEntityModel(InstructorNpc)),
-        boolText(NetworkGetEntityIsNetworked(InstructorNpc)),
-        boolText(GroundResolved)
-    ))
+        local State = Entity(Ped).state
+        local ExpectedModel = GetHashKey(Config.Instructor.Model)
+        if State.OFCNHInstructor ~= true or tonumber(State.OFCNHInstructorGeneration) ~= Generation or tonumber(State.OFCNHInstructorSetupRevision) ~= Revision or GetEntityModel(Ped) ~= ExpectedModel then
+            debugLog(("instructor_setup_rejected network=%s generation=%s reason=identity_mismatch"):format(Network,Generation))
+            finishSetup()
+            return
+        end
 
-    local Configured,ConfigureError = configureInstructor(InstructorNpc,Coords,GroundZ)
-    if not Configured then
-        debugLog(("instructor_configuration_failed entity=%s reason=%s"):format(tostring(InstructorNpc),tostring(ConfigureError)))
-        InstructorNpc = deletePedSafe(InstructorNpc)
-        InstructorNpcCreatedAt = 0
-        InstructorNpcSpawning = false
-        NextInstructorSpawnAt = GetGameTimer() + Config.Instructor.RespawnDebounceMs
-        InstructorNpcRespawnReason = ConfigureError or "configuration_failed"
-        return false
-    end
+        local FinalCoords = nil
+        local SetupSuccess,Configured,SetupError = xpcall(function()
+            local Coords = Config.Instructor.Coords
+            local SpawnZ = tonumber(Config.Instructor.SpawnZ) or Coords.z
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,SpawnZ,false,false,false)
+            SetEntityHeading(Ped,Coords.w)
+            SetEntityInvincible(Ped,true)
+            SetEntityCanBeDamaged(Ped,false)
+            SetBlockingOfNonTemporaryEvents(Ped,true)
+            TaskSetBlockingOfNonTemporaryEvents(Ped,true)
+            SetPedCanRagdoll(Ped,false)
+            SetPedDiesWhenInjured(Ped,false)
+            SetPedFleeAttributes(Ped,0,false)
 
-    InstructorNpcMissingChecks = 0
-    InstructorNpcRespawnReason = nil
-    InstructorNpcSpawning = false
-    NextInstructorSpawnAt = 0
-    debugLog(("instructor_ready entity=%s model=%s"):format(InstructorNpc,tostring(Config.Instructor.Model)))
-    return true
+            if Config.Instructor.Scenario and Config.Instructor.Scenario ~= "" then
+                TaskStartScenarioInPlace(Ped,Config.Instructor.Scenario,0,true)
+                SetPedKeepTask(Ped,true)
+            end
+
+            Wait(0)
+            if ResourceStopping or not DoesEntityExist(Ped) or not NetworkHasControlOfEntity(Ped) then
+                return false,"entity_or_control_lost"
+            end
+
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,SpawnZ,false,false,false)
+            SetEntityHeading(Ped,Coords.w)
+            FreezeEntityPosition(Ped,true)
+            FinalCoords = GetEntityCoords(Ped)
+            return true,nil
+        end,function(Error)
+            return tostring(Error)
+        end)
+        finishSetup()
+
+        if not SetupSuccess then
+            debugLog(("instructor_setup_failed network=%s generation=%s revision=%s error=%s"):format(Network,Generation,Revision,tostring(Configured)))
+            return
+        end
+
+        if not Configured then
+            debugLog(("instructor_setup_deferred network=%s generation=%s revision=%s reason=%s"):format(Network,Generation,Revision,tostring(SetupError)))
+            return
+        end
+
+        InstructorConfiguredSetup[Network] = SetupToken
+        debugLog(("instructor_configured network=%s generation=%s reason=%s coords=%.4f,%.4f,%.4f health=%s alpha=%s visible=%s frozen=%s"):format(
+            Network,
+            Generation,
+            tostring(Reason or "server_owner"),
+            FinalCoords.x,
+            FinalCoords.y,
+            FinalCoords.z,
+            tostring(GetEntityHealth(Ped)),
+            tostring(GetEntityAlpha(Ped)),
+            boolText(IsEntityVisible(Ped)),
+            boolText(IsEntityPositionFrozen(Ped))
+        ))
+        acknowledgeInstructor(Network,Generation,Revision)
+    end)
 end
+
+RegisterNetEvent("of_drivingschool:ConfigureInstructor",function(Network,Generation,Revision)
+    configureNetworkedInstructor(Network,Generation,Revision,"server_owner")
+end)
+
+AddStateBagChangeHandler("OFCNHInstructorSetupRevision",nil,function(BagName,_,Value)
+    local Revision = tonumber(Value)
+    if ResourceStopping or not Revision or Revision <= 0 then
+        return
+    end
+
+    local Ped = GetEntityFromStateBagName(BagName)
+    if Ped == 0 or not DoesEntityExist(Ped) or not NetworkGetEntityIsNetworked(Ped) then
+        return
+    end
+
+    local Network = NetworkGetNetworkIdFromEntity(Ped)
+    local Generation = tonumber(Entity(Ped).state.OFCNHInstructorGeneration)
+    configureNetworkedInstructor(Network,Generation,Revision,"state_bag")
+end)
 
 local function removeInstructorTarget()
     if GetResourceState("target") == "started" then
@@ -697,44 +652,6 @@ CreateThread(function()
             registerInstructorTarget()
         end
 
-        if InstructorNpc ~= 0 and DoesEntityExist(InstructorNpc) then
-            if InstructorNpcMissingChecks > 0 then
-                debugLog(("instructor_watchdog_recovered entity=%s after_missing_checks=%s"):format(InstructorNpc,InstructorNpcMissingChecks))
-            end
-
-            InstructorNpcMissingChecks = 0
-        elseif InstructorNpc ~= 0 then
-            local MissingThreshold = math.max(3,tonumber(Config.Instructor.MissingChecksBeforeRespawn) or 3)
-            InstructorNpcMissingChecks = InstructorNpcMissingChecks + 1
-            local ElapsedMs = InstructorNpcCreatedAt > 0 and math.max(0,GetGameTimer() - InstructorNpcCreatedAt) or 0
-            debugLog(("instructor_watchdog_missing entity=%s check=%s/%s elapsed_since_creation_ms=%s"):format(
-                tostring(InstructorNpc),
-                InstructorNpcMissingChecks,
-                MissingThreshold,
-                ElapsedMs
-            ))
-            logInstructorSnapshot(("watchdog_missing_%s"):format(InstructorNpcMissingChecks),InstructorNpc)
-
-            if InstructorNpcMissingChecks >= MissingThreshold then
-                if DoesEntityExist(InstructorNpc) then
-                    debugLog(("instructor_watchdog_recovered entity=%s during_confirmation=true"):format(InstructorNpc))
-                    InstructorNpcMissingChecks = 0
-                else
-                    debugLog(("instructor_watchdog_lost_confirmed entity=%s elapsed_since_creation_ms=%s recreation_reason=consecutive_missing_checks"):format(
-                        tostring(InstructorNpc),
-                        ElapsedMs
-                    ))
-                    InstructorNpc = 0
-                    InstructorNpcCreatedAt = 0
-                    InstructorNpcMissingChecks = 0
-                    InstructorNpcRespawnReason = "watchdog_consecutive_missing_checks"
-                    NextInstructorSpawnAt = GetGameTimer() + Config.Instructor.RespawnDebounceMs
-                end
-            end
-        elseif InstructorNpc == 0 and not InstructorNpcSpawning then
-            createInstructorNpc(InstructorNpcRespawnReason)
-        end
-
         Wait(Config.Instructor.HealthCheckMs)
     end
 end)
@@ -814,7 +731,6 @@ AddEventHandler("onResourceStop",function(ResourceName)
     hideResult()
     removeInstructorTarget()
     cleanupExam(true)
-    InstructorNpc = deletePedSafe(InstructorNpc)
-    InstructorNpcCreatedAt = 0
-    InstructorNpcMissingChecks = 0
+    InstructorSetupInProgress = {}
+    InstructorConfiguredSetup = {}
 end)
