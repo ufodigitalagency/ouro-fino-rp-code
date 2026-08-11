@@ -4,6 +4,17 @@
 local function boolText(Value)
     return Value and "true" or "false"
 end
+local function nativeBool(Value)
+    if Value == true then
+        return true
+    end
+
+    if type(Value) == "number" then
+        return Value ~= 0
+    end
+
+    return false
+end
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- READSEATBELT
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -40,9 +51,9 @@ local function readVehicleState()
         IsDriver = GetPedInVehicleSeat(Vehicle,-1) == Ped,
         Seatbelt = Seatbelt,
         SeatbeltError = SeatbeltError,
-        EngineOn = GetIsVehicleEngineRunning(Vehicle) == true,
-        LightsOn = LightsOn == true,
-        HighBeamsOn = HighBeamsOn == true,
+        EngineOn = nativeBool(GetIsVehicleEngineRunning(Vehicle)),
+        LightsOn = nativeBool(LightsOn),
+        HighBeamsOn = nativeBool(HighBeamsOn),
         SpeedKmh = math.floor((GetEntitySpeed(Vehicle) * 3.6) + 0.5)
     }
 end
