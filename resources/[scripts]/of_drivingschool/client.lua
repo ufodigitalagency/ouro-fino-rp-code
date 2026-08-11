@@ -4,6 +4,10 @@
 local function boolText(Value)
     return Value and "true" or "false"
 end
+
+local function rawText(Value)
+    return ("%s(%s)"):format(tostring(Value),type(Value))
+end
 local function nativeBool(Value)
     if Value == true then
         return true
@@ -42,7 +46,7 @@ local function readVehicleState()
         }
     end
 
-    local _,LightsOn,HighBeamsOn = GetVehicleLightsState(Vehicle)
+    local LightsResult,LightsOn,HighBeamsOn = GetVehicleLightsState(Vehicle)
     local Seatbelt,SeatbeltError = readSeatbelt()
 
     return {
@@ -51,6 +55,9 @@ local function readVehicleState()
         IsDriver = GetPedInVehicleSeat(Vehicle,-1) == Ped,
         Seatbelt = Seatbelt,
         SeatbeltError = SeatbeltError,
+        LightsResultRaw = LightsResult,
+        LightsOnRaw = LightsOn,
+        HighBeamsOnRaw = HighBeamsOn,
         EngineOn = nativeBool(GetIsVehicleEngineRunning(Vehicle)),
         LightsOn = nativeBool(LightsOn),
         HighBeamsOn = nativeBool(HighBeamsOn),
@@ -77,5 +84,11 @@ RegisterCommand("ofcnhdiag",function()
         boolText(State.LightsOn),
         boolText(State.HighBeamsOn),
         State.SpeedKmh
+    ))
+
+    print(("[of_drivingschool] RAW LIGHTS | result=%s lightsOn=%s highBeamsOn=%s"):format(
+        rawText(State.LightsResultRaw),
+        rawText(State.LightsOnRaw),
+        rawText(State.HighBeamsOnRaw)
     ))
 end,false)
