@@ -1,42 +1,46 @@
 # of_drivingschool
 
-Fundacao do sistema de CNH e autoescola do Ouro Fino RP.
+Fundacao persistente e operacional do sistema de CNH e Autoescola do Ouro Fino RP.
 
-## Estado atual — Phase 2C
+## Estado atual — Phase 3A
 
-A fundacao persistente server-side esta ativa e o cliente possui diagnostico read-only de cinto, motor e farois.
+Esta fase oferece:
+
+- persistencia das categorias A, B, C e D;
+- NPC fixo e target da Autoescola;
+- sessoes server-side de prova Categoria B;
+- tres vagas reservadas atomicamente;
+- veiculo temporario configuravel;
+- limitador exclusivo de 50 km/h;
+- checklist ordenado de motorista, cinto, motor e farois;
+- estrutura de rotas futuras e coordenadas da futura baliza;
+- NUI de resultado somente para apresentacao;
+- comandos administrativos e de emergencia pelo console;
+- auditoria persistente das concessoes e revogacoes;
+- limpeza por cancelamento, desconexao, morte, timeout, desaparecimento do veiculo e stop do resource.
 
 Ainda NAO:
 
 - bloqueia jogadores sem CNH;
 - altera o `af_starter_vehicle`;
-- entrega Panto apos aprovacao;
-- cria prova pratica;
-- cria NPC ou UI da autoescola;
-- altera controles do veiculo.
+- remove ou condiciona o Panto automatico;
+- concede CNH ao concluir o checklist;
+- executa ou pontua uma rota pratica;
+- fiscaliza semaforos ou placas;
+- cria ou avalia a prova de baliza;
+- altera controles, garagens ou persistencia de veiculos pessoais.
 
 ## Persistencia
 
-Tabela:
+Licencas:
 
 `ouro_fino_driver_licenses`
 
-Chave:
+Auditoria administrativa:
 
-`Passport + Category`
+`ouro_fino_driver_license_audit`
 
-Categorias previstas:
-
-- A
-- B
-- C
-- D
-
-Status previstos:
-
-- `active`
-- `suspended`
-- `revoked`
+A chave da licenca e `Passport + Category`. Os status continuam sendo `active`, `suspended` e `revoked`.
 
 ## Exports server-side
 
@@ -48,24 +52,42 @@ Status previstos:
 - `RevokeLicense(Passport,Category,ResponsiblePassport,Reason)`
 - `ActivateLicense(Passport,Category)`
 
-Nenhum desses exports e exposto diretamente ao cliente.
+Nenhum export e exposto diretamente ao cliente.
+
+## Comandos
+
+Admin dentro do jogo:
+
+- `/cnhdar <passaporte> [categoria] [motivo]`
+- `/cnhremover <passaporte> [categoria] [motivo]`
+- `/cnhconsultar <passaporte> [categoria]`
+- `/ofcnhcds`
+- `/ofcnhuitest <aprovado|reprovado> [motivo]` (somente apresentacao)
+
+Jogador com prova ativa:
+
+- `/ofcnhcancelar`
+
+Console do FXServer:
+
+- `ofcnhstatus <passaporte> [categoria]`
+- `ofcnhgrant <passaporte> [categoria] [motivo]`
+- `ofcnhrevoke <passaporte> [categoria] [motivo]`
+
+Os comandos de concessao e revogacao do console aceitam exclusivamente `source == 0`.
 
 ## Diagnostico
 
-No console do FXServer:
-
-`ofcnhstatus <passaporte>`
-
-ou:
-
-`ofcnhstatus <passaporte> B`
-
-O comando e somente leitura.
-
-### Cliente
-
-No console F8 do jogo:
+No F8 do jogo:
 
 `ofcnhdiag`
 
-O diagnostico e somente leitura. Ele informa se o jogador esta em veiculo, se esta no banco do motorista, estado real do cinto via export do `hud`, motor, farois, farol alto e velocidade aproximada em km/h.
+O diagnostico informa banco do motorista, cinto via `exports["hud"]:IsSeatbeltOn()`, motor, farois, farol alto e velocidade.
+
+## Limite de seguranca da Phase 3A
+
+As observacoes de cinto, motor e farois do checklist se originam no cliente. O servidor aceita somente a ordem esperada para a sessao e o veiculo registrados.
+
+`READY_FOR_ROUTE` representa apenas preparacao para a rota, nunca autorizacao. Qualquer resultado ou concessao futura deve ser decidida pelo servidor, e nenhuma transicao do checklist chama `GrantLicense`.
+
+Os eventos `of_drivingschool:ShowApproved` e `of_drivingschool:ShowFailed` controlam somente a NUI local. Exibir `APROVADO` nao concede licenca.
