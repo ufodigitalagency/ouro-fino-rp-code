@@ -31,10 +31,12 @@ Config.Instructor = {
     Model = "s_m_m_autoshop_01",
     Scenario = "WORLD_HUMAN_CLIPBOARD",
     ModelTimeoutMs = 10000,
+    GroundResolveTimeoutMs = 5000,
     TargetRadius = 0.85,
     TargetDistance = 2.0,
     RespawnDebounceMs = 5000,
-    HealthCheckMs = 2000
+    HealthCheckMs = 2000,
+    MissingChecksBeforeRespawn = 3
 }
 
 Config.Exam = {
