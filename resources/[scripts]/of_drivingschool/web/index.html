@@ -7,6 +7,22 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <aside class="checklist" aria-live="polite" aria-hidden="true">
+        <section class="checklist__card">
+            <header class="checklist__header">
+                <p class="checklist__brand">AUTOESCOLA OURO FINO</p>
+                <p class="checklist__stage">ETAPA <span>1</span> DE 4</p>
+            </header>
+            <h2 class="checklist__instruction">ENTRE NO VEÍCULO</h2>
+            <progress class="checklist__progress" aria-label="Progresso da preparação" max="4" value="0">0 de 4</progress>
+            <ol class="checklist__steps">
+                <li class="checklist__step" data-step="0"><span class="checklist__marker" aria-hidden="true">●</span><span class="checklist__label">Entrar no veículo</span></li>
+                <li class="checklist__step" data-step="1"><span class="checklist__marker" aria-hidden="true">○</span><span class="checklist__label">Colocar o cinto</span></li>
+                <li class="checklist__step" data-step="2"><span class="checklist__marker" aria-hidden="true">○</span><span class="checklist__label">Ligar o motor</span></li>
+                <li class="checklist__step" data-step="3"><span class="checklist__marker" aria-hidden="true">○</span><span class="checklist__label">Acender os faróis</span></li>
+            </ol>
+        </section>
+    </aside>
     <main class="result" aria-live="polite" aria-hidden="true">
         <section class="result__card">
             <div class="result__glow" aria-hidden="true"></div>

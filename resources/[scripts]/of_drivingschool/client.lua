@@ -2,6 +2,7 @@ local Tunnel = module("vrp","lib/Tunnel")
 local vSERVER = Tunnel.getInterface("of_drivingschool")
 
 local InstructorTarget = "OFCNH:Instructor"
+local ExamVehicleChassisModType = 5
 local InstructorTargetRegistered = false
 local NextInstructorTargetLogAt = 0
 local InstructorSetupInProgress = {}
@@ -98,6 +99,52 @@ local function acknowledgeInstructor(Network,Generation,Revision)
     TriggerServerEvent("of_drivingschool:InstructorConfigured",Network,Generation,Revision)
 end
 
+local function resolveInstructorPlacement(Ped,Coords)
+    local TimeoutAt = GetGameTimer() + (tonumber(Config.Instructor.GroundResolveTimeoutMs) or 5000)
+    local ProbeOffsets = { 1.0,5.0,20.0 }
+    local GroundZ = nil
+    local CollisionLoaded = false
+
+    repeat
+        RequestCollisionAtCoord(Coords.x,Coords.y,Coords.z)
+        CollisionLoaded = HasCollisionLoadedAroundEntity(Ped)
+
+        if CollisionLoaded then
+            for _,Offset in ipairs(ProbeOffsets) do
+                local Found,ResolvedZ = GetGroundZFor_3dCoord(Coords.x,Coords.y,Coords.z + Offset,false)
+                if nativeBool(Found) then
+                    GroundZ = ResolvedZ
+                    break
+                end
+            end
+        end
+
+        if not GroundZ then
+            Wait(100)
+        end
+    until GroundZ or ResourceStopping or GetGameTimer() >= TimeoutAt
+
+    local GroundResolved = GroundZ ~= nil
+    if not GroundResolved then
+        GroundZ = tonumber(Config.Instructor.GroundFallbackZ) or Coords.z
+        print(("[of_drivingschool] WARN instructor_ground_unresolved; using ground_fallback_z=%.4f"):format(GroundZ))
+    end
+
+    local ModelMinimum,ModelMaximum = GetModelDimensions(GetEntityModel(Ped))
+    local MinimumZ = ModelMinimum and tonumber(ModelMinimum.z) or 0.0
+    local MaximumZ = ModelMaximum and tonumber(ModelMaximum.z) or 0.0
+    local FinalZ = GroundZ - MinimumZ
+
+    return {
+        GroundZ = GroundZ,
+        GroundResolved = GroundResolved,
+        CollisionLoaded = CollisionLoaded,
+        MinimumZ = MinimumZ,
+        MaximumZ = MaximumZ,
+        FinalZ = FinalZ
+    }
+end
+
 local function configureNetworkedInstructor(Network,Generation,Revision,Reason)
     Network = math.floor(tonumber(Network) or 0)
     Generation = math.floor(tonumber(Generation) or 0)
@@ -152,10 +199,11 @@ local function configureNetworkedInstructor(Network,Generation,Revision,Reason)
         end
 
         local FinalCoords = nil
+        local Placement = nil
         local SetupSuccess,Configured,SetupError = xpcall(function()
             local Coords = Config.Instructor.Coords
-            local SpawnZ = tonumber(Config.Instructor.SpawnZ) or Coords.z
-            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,SpawnZ,false,false,false)
+            Placement = resolveInstructorPlacement(Ped,Coords)
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,Placement.FinalZ,false,false,false)
             SetEntityHeading(Ped,Coords.w)
             SetEntityInvincible(Ped,true)
             SetEntityCanBeDamaged(Ped,false)
@@ -175,7 +223,7 @@ local function configureNetworkedInstructor(Network,Generation,Revision,Reason)
                 return false,"entity_or_control_lost"
             end
 
-            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,SpawnZ,false,false,false)
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,Placement.FinalZ,false,false,false)
             SetEntityHeading(Ped,Coords.w)
             FreezeEntityPosition(Ped,true)
             FinalCoords = GetEntityCoords(Ped)
@@ -196,10 +244,16 @@ local function configureNetworkedInstructor(Network,Generation,Revision,Reason)
         end
 
         InstructorConfiguredSetup[Network] = SetupToken
-        debugLog(("instructor_configured network=%s generation=%s reason=%s coords=%.4f,%.4f,%.4f health=%s alpha=%s visible=%s frozen=%s"):format(
+        debugLog(("instructor_configured network=%s generation=%s reason=%s collision_loaded=%s ground_resolved=%s ground_z=%.4f model_min_z=%.4f model_max_z=%.4f calculated_final_z=%.4f coords=%.4f,%.4f,%.4f health=%s alpha=%s visible=%s frozen=%s"):format(
             Network,
             Generation,
             tostring(Reason or "server_owner"),
+            boolText(Placement.CollisionLoaded),
+            boolText(Placement.GroundResolved),
+            Placement.GroundZ,
+            Placement.MinimumZ,
+            Placement.MaximumZ,
+            Placement.FinalZ,
             FinalCoords.x,
             FinalCoords.y,
             FinalCoords.z,
@@ -291,10 +345,28 @@ local function hideResult()
     SendNUIMessage({ Action = "hideResult" })
 end
 
+local function hideChecklistHud()
+    SendNUIMessage({ Action = "hideChecklist" })
+end
+
+local function showChecklistHud(State)
+    State = tostring(State or "")
+    if not Config.Checklist[State] then
+        hideChecklistHud()
+        return
+    end
+
+    SendNUIMessage({
+        Action = "showChecklist",
+        State = State
+    })
+end
+
 local function showResult(Result,Reason,Category)
     local Normalized = Result == "approved" and "approved" or "failed"
     ResultGeneration = ResultGeneration + 1
     local Generation = ResultGeneration
+    hideChecklistHud()
 
     SendNUIMessage({
         Action = "showResult",
@@ -348,6 +420,7 @@ end
 local function cleanupExam(DeleteVehicle)
     local Exam = ActiveExam
     ActiveExam = nil
+    hideChecklistHud()
 
     if DeleteVehicle ~= false then
         deleteExamVehicle(Exam)
@@ -395,6 +468,19 @@ end
 
 local function configureExamVehicle(Vehicle,Plate)
     SetEntityAsMissionEntity(Vehicle,true,true)
+    SetVehicleModKit(Vehicle,0)
+    local ChassisOptions = GetNumVehicleMods(Vehicle,ExamVehicleChassisModType)
+    if ChassisOptions > 0 then
+        SetVehicleMod(Vehicle,ExamVehicleChassisModType,0,false)
+        debugLog(("exam_vehicle_chassis_initialized model=%s options=%s selected=%s"):format(
+            tostring(Config.Exam.VehicleModel),
+            ChassisOptions,
+            GetVehicleMod(Vehicle,ExamVehicleChassisModType)
+        ))
+    else
+        print(("[of_drivingschool] WARN exam_vehicle_chassis_unavailable model=%s"):format(tostring(Config.Exam.VehicleModel)))
+    end
+
     SetVehicleOnGroundProperly(Vehicle)
     SetVehicleNumberPlateText(Vehicle,Plate)
     SetVehicleDirtLevel(Vehicle,0.0)
@@ -512,7 +598,7 @@ local function createExamVehicle(Reservation)
 
     Exam.State = Registered.state
     Exam.VehicleRegistered = true
-    notify(Registered.message or Config.Checklist.WAITING_FOR_DRIVER,"amarelo",7000)
+    showChecklistHud(Exam.State)
     return true
 end
 
@@ -585,7 +671,7 @@ local function advanceChecklist(Step)
 
     Exam.State = Result.state
     Exam.WrongSeatNotified = false
-    notify(Result.message or Config.Checklist[Exam.State] or "Etapa concluida.",Exam.State == "READY_FOR_ROUTE" and "verde" or "amarelo",7000)
+    showChecklistHud(Exam.State)
 end
 
 RegisterCommand("ofcnhdiag",function()
@@ -729,6 +815,7 @@ AddEventHandler("onResourceStop",function(ResourceName)
 
     ResourceStopping = true
     hideResult()
+    hideChecklistHud()
     removeInstructorTarget()
     cleanupExam(true)
     InstructorSetupInProgress = {}

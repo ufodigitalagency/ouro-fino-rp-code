@@ -3,6 +3,8 @@
     font-family: "Segoe UI", Arial, sans-serif;
     --accent: #39d98a;
     --accent-rgb: 57, 217, 138;
+    --gold: #d8ad55;
+    --warm-white: #f6f3ea;
 }
 
 * {
@@ -39,9 +41,163 @@ body.is-visible {
     transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-body.is-visible .result {
+body.has-result .result {
     opacity: 1;
     transform: scale(1);
+}
+
+.checklist {
+    position: fixed;
+    top: clamp(2rem, 7vh, 5rem);
+    left: 50%;
+    width: min(35rem, calc(100vw - 2rem));
+    color: var(--warm-white);
+    opacity: 0;
+    transform: translate(-50%, -0.8rem);
+    transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+body.has-checklist .checklist {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.checklist__card {
+    overflow: hidden;
+    padding: 1.2rem 1.35rem 1.15rem;
+    border: 1px solid rgba(216, 173, 85, 0.38);
+    border-radius: 1rem;
+    background:
+        linear-gradient(135deg, rgba(20, 23, 27, 0.94), rgba(8, 10, 13, 0.88)),
+        radial-gradient(circle at 12% 0%, rgba(216, 173, 85, 0.13), transparent 42%);
+    box-shadow:
+        0 1.1rem 3rem rgba(0, 0, 0, 0.34),
+        inset 0 1px 0 rgba(255, 255, 255, 0.055);
+    backdrop-filter: blur(12px);
+}
+
+.checklist__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.checklist__brand,
+.checklist__stage {
+    margin: 0;
+    font-size: 0.69rem;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+}
+
+.checklist__brand {
+    color: var(--gold);
+}
+
+.checklist__stage {
+    color: rgba(246, 243, 234, 0.58);
+}
+
+.checklist__stage span {
+    color: var(--warm-white);
+}
+
+.checklist__instruction {
+    margin: 0.7rem 0 0.8rem;
+    color: var(--warm-white);
+    font-family: "Arial Narrow", "Segoe UI", Arial, sans-serif;
+    font-size: clamp(1.35rem, 2.5vw, 1.75rem);
+    font-style: italic;
+    font-weight: 800;
+    letter-spacing: 0.025em;
+    line-height: 1.05;
+}
+
+.checklist__progress {
+    display: block;
+    width: 100%;
+    height: 0.25rem;
+    -webkit-appearance: none;
+    appearance: none;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--gold);
+    accent-color: var(--gold);
+}
+
+.checklist__progress::-webkit-progress-bar {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.checklist__progress::-webkit-progress-value {
+    border-radius: 999px;
+    background: linear-gradient(90deg, #b88934, var(--gold));
+    box-shadow: 0 0 0.8rem rgba(216, 173, 85, 0.35);
+}
+
+.checklist__progress::-moz-progress-bar {
+    border-radius: 999px;
+    background: linear-gradient(90deg, #b88934, var(--gold));
+}
+
+.checklist__steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem 1rem;
+    margin: 0.9rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.checklist__step {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.55rem;
+    color: rgba(246, 243, 234, 0.5);
+    font-size: 0.78rem;
+    font-weight: 650;
+    transition: color 160ms ease, transform 160ms ease;
+}
+
+.checklist__marker {
+    display: grid;
+    width: 1rem;
+    flex: 0 0 1rem;
+    place-items: center;
+    color: rgba(246, 243, 234, 0.34);
+    font-size: 0.72rem;
+}
+
+.checklist__step.is-current {
+    color: var(--warm-white);
+}
+
+.checklist__step.is-current .checklist__marker {
+    color: var(--gold);
+    filter: drop-shadow(0 0 0.35rem rgba(216, 173, 85, 0.48));
+}
+
+.checklist__step.is-complete {
+    color: rgba(163, 233, 194, 0.88);
+}
+
+.checklist__step.is-complete .checklist__marker {
+    color: #55d995;
+}
+
+.checklist__step.is-just-completed {
+    animation: checklist-complete 520ms ease;
+}
+
+@keyframes checklist-complete {
+    0% { transform: translateX(0); }
+    35% { color: #8ff0ba; transform: translateX(0.2rem); }
+    100% { transform: translateX(0); }
 }
 
 .result__card {
@@ -151,6 +307,18 @@ body.is-failed .result__icon::before {
 }
 
 @media (max-width: 600px) {
+    .checklist {
+        top: 1rem;
+    }
+
+    .checklist__card {
+        padding: 1rem;
+    }
+
+    .checklist__steps {
+        grid-template-columns: 1fr;
+    }
+
     .result {
         padding: 1rem;
     }
@@ -168,7 +336,12 @@ body.is-failed .result__icon::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .result {
+    .result,
+    .checklist {
         transition: none;
+    }
+
+    .checklist__step.is-just-completed {
+        animation: none;
     }
 }

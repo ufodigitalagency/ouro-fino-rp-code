@@ -126,7 +126,7 @@ local function createInstructor(Reason)
 
     InstructorNpcCreating = true
     local Coords = Config.Instructor.Coords
-    local SpawnZ = tonumber(Config.Instructor.SpawnZ) or Coords.z
+    local SpawnZ = Coords.z
     local Model = GetHashKey(Config.Instructor.Model)
     debugLog(("instructor_creation_attempt reason=%s model=%s coords=%.4f,%.4f,%.4f heading=%.2f"):format(
         tostring(Reason or "server_start"),

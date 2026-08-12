@@ -28,11 +28,12 @@ Config.Admin = {
 
 Config.Instructor = {
     Coords = vec4(-2290.48,364.09,174.60,36.86),
-    SpawnZ = 173.6017,
+    GroundFallbackZ = 173.6017,
     Model = "s_m_m_autoshop_01",
     Scenario = "WORLD_HUMAN_CLIPBOARD",
     CreateTimeoutMs = 5000,
     ConfigureTimeoutMs = 5000,
+    GroundResolveTimeoutMs = 5000,
     ConfigureRetryMs = 5000,
     TargetRadius = 0.85,
     TargetDistance = 2.0,
@@ -57,7 +58,7 @@ Config.Exam = {
     LimiterRefreshMs = 750,
     ServerWatchdogMs = 2000,
     SpawnSlots = {
-        vec4(-2281.74,404.59,173.79,119.06),
+        vec4(-2295.38,375.78,173.99,110.56),
         vec4(-2283.48,407.87,173.79,124.73),
         vec4(-2285.92,410.63,173.79,133.23)
     }
