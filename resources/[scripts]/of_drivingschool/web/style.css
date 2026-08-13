@@ -48,7 +48,7 @@ body.has-result .result {
 
 .checklist {
     position: fixed;
-    top: clamp(2rem, 7vh, 5rem);
+    top: clamp(5rem, calc(7vh + 3rem), 8rem);
     left: 50%;
     width: min(35rem, calc(100vw - 2rem));
     color: var(--warm-white);
