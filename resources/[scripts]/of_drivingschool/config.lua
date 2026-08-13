@@ -44,7 +44,7 @@ Config.Instructor = {
 
 Config.Exam = {
     Category = "B",
-    VehicleModel = "saveirog3autoescola",
+    VehicleModel = "gxgiulia",
     MaxSpeedKmh = 50.0,
     StartServerDistance = 4.0,
     VehicleRegistrationDistance = 2.0,

@@ -2,7 +2,6 @@ local Tunnel = module("vrp","lib/Tunnel")
 local vSERVER = Tunnel.getInterface("of_drivingschool")
 
 local InstructorTarget = "OFCNH:Instructor"
-local ExamVehicleChassisModType = 5
 local InstructorTargetRegistered = false
 local NextInstructorTargetLogAt = 0
 local InstructorSetupInProgress = {}
@@ -468,17 +467,19 @@ end
 
 local function configureExamVehicle(Vehicle,Plate)
     SetEntityAsMissionEntity(Vehicle,true,true)
-    SetVehicleModKit(Vehicle,0)
-    local ChassisOptions = GetNumVehicleMods(Vehicle,ExamVehicleChassisModType)
-    if ChassisOptions > 0 then
-        SetVehicleMod(Vehicle,ExamVehicleChassisModType,0,false)
-        debugLog(("exam_vehicle_chassis_initialized model=%s options=%s selected=%s"):format(
+
+    local LiveryCount = GetVehicleLiveryCount(Vehicle)
+    if LiveryCount and LiveryCount > 0 then
+        SetVehicleLivery(Vehicle,0)
+        debugLog(("exam_vehicle_livery_applied model=%s count=%s index=0"):format(
             tostring(Config.Exam.VehicleModel),
-            ChassisOptions,
-            GetVehicleMod(Vehicle,ExamVehicleChassisModType)
+            LiveryCount
         ))
     else
-        print(("[of_drivingschool] WARN exam_vehicle_chassis_unavailable model=%s"):format(tostring(Config.Exam.VehicleModel)))
+        debugLog(("exam_vehicle_livery_unavailable model=%s count=%s"):format(
+            tostring(Config.Exam.VehicleModel),
+            tostring(LiveryCount)
+        ))
     end
 
     SetVehicleOnGroundProperly(Vehicle)
