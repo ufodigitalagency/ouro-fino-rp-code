@@ -132,7 +132,7 @@ local function resolveInstructorPlacement(Ped,Coords)
     local ModelMinimum,ModelMaximum = GetModelDimensions(GetEntityModel(Ped))
     local MinimumZ = ModelMinimum and tonumber(ModelMinimum.z) or 0.0
     local MaximumZ = ModelMaximum and tonumber(ModelMaximum.z) or 0.0
-    local FinalZ = GroundZ - MinimumZ
+    local FinalZ = GroundZ - MinimumZ + (tonumber(Config.Instructor.VisualZOffset) or 0.0)
 
     return {
         GroundZ = GroundZ,
@@ -467,21 +467,11 @@ end
 
 local function configureExamVehicle(Vehicle,Plate)
     SetEntityAsMissionEntity(Vehicle,true,true)
-
-    local LiveryCount = GetVehicleLiveryCount(Vehicle)
-    if LiveryCount and LiveryCount > 0 then
-        SetVehicleLivery(Vehicle,0)
-        debugLog(("exam_vehicle_livery_applied model=%s count=%s index=0"):format(
-            tostring(Config.Exam.VehicleModel),
-            LiveryCount
-        ))
-    else
-        debugLog(("exam_vehicle_livery_unavailable model=%s count=%s"):format(
-            tostring(Config.Exam.VehicleModel),
-            tostring(LiveryCount)
-        ))
-    end
-
+    SetVehicleColours(Vehicle,27,27)
+    ClearVehicleCustomPrimaryColour(Vehicle)
+    ClearVehicleCustomSecondaryColour(Vehicle)
+    SetVehicleCustomPrimaryColour(Vehicle,180,0,0)
+    SetVehicleCustomSecondaryColour(Vehicle,180,0,0)
     SetVehicleOnGroundProperly(Vehicle)
     SetVehicleNumberPlateText(Vehicle,Plate)
     SetVehicleDirtLevel(Vehicle,0.0)

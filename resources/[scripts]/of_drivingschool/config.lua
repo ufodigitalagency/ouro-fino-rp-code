@@ -29,6 +29,8 @@ Config.Admin = {
 Config.Instructor = {
     Coords = vec4(-2290.48,364.09,174.60,36.86),
     GroundFallbackZ = 173.6017,
+    -- Compensates the visual sole position of this model/scenario; it is not part of ground detection.
+    VisualZOffset = -0.12,
     Model = "s_m_m_autoshop_01",
     Scenario = "WORLD_HUMAN_CLIPBOARD",
     CreateTimeoutMs = 5000,
@@ -44,7 +46,7 @@ Config.Instructor = {
 
 Config.Exam = {
     Category = "B",
-    VehicleModel = "gxgiulia",
+    VehicleModel = "sentinel3",
     MaxSpeedKmh = 50.0,
     StartServerDistance = 4.0,
     VehicleRegistrationDistance = 2.0,
