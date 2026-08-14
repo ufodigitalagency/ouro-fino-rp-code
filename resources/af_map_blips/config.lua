@@ -72,6 +72,8 @@ Config.Blips = {
     { id = "mercearia_20", enabled = true, name = "Mercearia", sprite = 52, color = 36, scale = 0.52, coords = { x = -1221.48, y = -907.93, z = 12.32 } },
 
     { id = "concessionaria", enabled = true, name = "Concessionaria", sprite = 225, color = 62, scale = 0.66, coords = { x = -54.3, y = -1094.8, z = 26.42 } },
+    { id = "autoescola", enabled = true, name = "Auto-escola", sprite = 225, color = 5, scale = 0.66, coords = { x = -2290.48, y = 364.09, z = 174.60 } },
+    { id = "garagem_autoescola", enabled = true, name = "Garagem - Auto-escola", sprite = 357, color = 62, scale = 0.58, coords = { x = -2334.10, y = 390.20, z = 174.60 } },
     { id = "hospital", enabled = true, marker = false, shortRange = true, name = "Hospital SAMU", sprite = 80, color = 38, scale = 0.62, coords = { x = -676.9, y = 312.16, z = 83.09 } },
     { id = "hospital_farmacia", enabled = true, marker = true, name = "Farmacia do Hospital", sprite = 52, color = 2, scale = 0.6, coords = { x = -664.49, y = 321.26, z = 83.09 } },
     { id = "hospital_lanchonete", enabled = true, marker = true, name = "Lanchonete do Hospital", sprite = 78, color = 62, scale = 0.6, coords = { x = -691.5, y = 322.46, z = 83.09 } },
