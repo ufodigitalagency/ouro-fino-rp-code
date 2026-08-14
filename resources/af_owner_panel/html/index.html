@@ -214,6 +214,39 @@
                                     <button id="removePlan" class="danger-button" type="button">Remover plano</button>
                                 </div>
                             </article>
+
+                            <article class="form-card cnh-card">
+                                <div class="cnh-heading">
+                                    <div>
+                                        <span class="section-kicker">Habilitação do jogador</span>
+                                        <h2>CNH</h2>
+                                        <p>Jogador: <strong id="cnhTarget">Selecione um jogador</strong></p>
+                                    </div>
+                                    <span id="cnhStatus" class="cnh-status" data-status="none">Sem registro</span>
+                                </div>
+
+                                <div class="cnh-fields">
+                                    <label>
+                                        Categoria
+                                        <select id="cnhCategory">
+                                            <option value="A">Categoria A</option>
+                                            <option value="B" selected>Categoria B</option>
+                                            <option value="C">Categoria C</option>
+                                            <option value="D">Categoria D</option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        Motivo da remoção
+                                        <input id="cnhReason" type="text" maxlength="120" placeholder="Obrigatório para remover a CNH" autocomplete="off">
+                                    </label>
+                                </div>
+
+                                <p id="cnhFeedback" class="cnh-feedback" role="status" aria-live="polite"></p>
+                                <div class="button-row">
+                                    <button id="cnhGrant" type="button">Dar / Reativar CNH</button>
+                                    <button id="cnhRevoke" class="danger-button" type="button">Remover CNH</button>
+                                </div>
+                            </article>
                         </div>
                     </section>
 

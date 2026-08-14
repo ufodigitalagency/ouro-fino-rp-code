@@ -179,6 +179,10 @@ RegisterNetEvent("af_owner_panel:grantMoneyResult",function(payload)
     SendNUIMessage({ action = "moneyGrantResult", payload = payload or {} })
 end)
 
+RegisterNetEvent("af_owner_panel:cnhResult",function(payload)
+    SendNUIMessage({ action = "cnhResult", payload = payload or {} })
+end)
+
 RegisterNetEvent("af_owner_panel:serverState",function(payload)
     SendNUIMessage({ action = "serverState", payload = payload or {} })
 end)
@@ -239,6 +243,16 @@ end)
 
 RegisterNUICallback("grantMoney",function(data,cb)
     TriggerServerEvent("af_owner_panel:grantMoney",type(data) == "table" and data or {})
+    cb({ accepted = true })
+end)
+
+RegisterNUICallback("cnhLookup",function(data,cb)
+    TriggerServerEvent("af_owner_panel:requestCnh",type(data) == "table" and data or {})
+    cb({ accepted = true })
+end)
+
+RegisterNUICallback("cnhAction",function(data,cb)
+    TriggerServerEvent("af_owner_panel:cnhAction",type(data) == "table" and data or {})
     cb({ accepted = true })
 end)
 

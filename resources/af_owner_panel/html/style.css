@@ -739,6 +739,91 @@ select {
     line-height: 1.55;
 }
 
+.cnh-card {
+    grid-column: 1 / -1;
+    min-height: 0;
+}
+
+.cnh-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.cnh-heading h2 {
+    margin-bottom: 6px;
+}
+
+.cnh-heading p {
+    margin-bottom: 14px;
+}
+
+.cnh-heading strong {
+    color: var(--text);
+}
+
+.cnh-fields {
+    display: grid;
+    grid-template-columns: minmax(180px, .5fr) minmax(280px, 1.5fr);
+    gap: 12px;
+}
+
+.cnh-fields label {
+    margin-top: 0;
+}
+
+.cnh-status {
+    flex: 0 0 auto;
+    padding: 6px 9px;
+    color: var(--muted-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.cnh-status[data-status="active"] {
+    color: #9ee6b0;
+    border-color: rgba(74,222,128,.25);
+    background: rgba(74,222,128,.08);
+}
+
+.cnh-status[data-status="suspended"] {
+    color: #ffd78a;
+    border-color: rgba(245,158,11,.28);
+    background: rgba(245,158,11,.08);
+}
+
+.cnh-status[data-status="revoked"],
+.cnh-status[data-status="unknown"] {
+    color: #ffaaaa;
+    border-color: rgba(239,68,68,.25);
+    background: rgba(239,68,68,.08);
+}
+
+.cnh-feedback {
+    display: none;
+    margin: 4px 0 12px;
+    padding: 9px 11px;
+    color: #a7e8b7;
+    border: 1px solid rgba(74,222,128,.2);
+    border-radius: 7px;
+    background: rgba(74,222,128,.07);
+}
+
+.cnh-feedback.is-visible {
+    display: block;
+}
+
+.cnh-feedback.is-error {
+    color: #ffaaaa;
+    border-color: rgba(239,68,68,.25);
+    background: rgba(239,68,68,.08);
+}
+
 label {
     display: block;
     margin: 10px 0 6px;
@@ -811,6 +896,12 @@ button:hover {
 
 button:active {
     transform: translateY(0);
+}
+
+.cnh-card button:disabled {
+    cursor: wait;
+    opacity: .55;
+    transform: none;
 }
 
 .button-row,
@@ -1225,6 +1316,10 @@ button.danger-button {
 
     .panel-row,
     #tab-permissions .panel-row {
+        grid-template-columns: 1fr;
+    }
+
+    .cnh-fields {
         grid-template-columns: 1fr;
     }
 

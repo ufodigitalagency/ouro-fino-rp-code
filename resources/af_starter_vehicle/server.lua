@@ -37,7 +37,7 @@ local function vehicleWeight(model)
     return 20
 end
 
-local function giveStarterVehicle(Passport)
+local function giveStarterVehicle(Passport,Reason)
     Passport = tonumber(Passport)
     if not Passport or Passport <= 0 or Passport ~= math.floor(Passport) then
         return { success = false,status = "invalid_passport",granted = false }
@@ -56,6 +56,7 @@ local function giveStarterVehicle(Passport)
     local Success,Result = pcall(function()
         prepareStarterVehicle()
 
+        Reason = tostring(Reason or "unspecified"):lower()
         local AlreadyMarked = vRP.SingleQuery("afstarter/get",{ Passport = Passport, Vehicle = StarterVehicle })
         local OwnedVehicle = vRP.SelectVehicle(Passport,StarterVehicle)
         if OwnedVehicle then
@@ -70,7 +71,7 @@ local function giveStarterVehicle(Passport)
             return { success = true,status = "already_owned",granted = false,available = true,vehicle = StarterVehicle }
         end
 
-        if AlreadyMarked then
+        if AlreadyMarked and Reason ~= "practical_exam_pass" then
             print(("[af_starter_vehicle] Marcador existente para o passaporte %s; nenhuma nova entrega realizada."):format(Passport))
             return { success = true,status = "already_marked",granted = false,available = false,vehicle = StarterVehicle }
         end
@@ -111,7 +112,7 @@ CreateThread(function()
 end)
 
 exports("GiveStarterVehicle",function(Passport,Reason)
-    local Result = giveStarterVehicle(Passport)
+    local Result = giveStarterVehicle(Passport,Reason)
     print(("[af_starter_vehicle] grant_request passport=%s reason=%s status=%s"):format(
         tostring(Passport),
         tostring(Reason or "unspecified"):gsub("[\r\n]"," "):sub(1,80),

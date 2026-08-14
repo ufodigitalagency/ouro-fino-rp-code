@@ -12,6 +12,8 @@ let moneyGrantPending = null;
 let moneyGrantTimeout = null;
 let premiumOrders = [];
 let jobHierarchies = [];
+let cnhActionPending = false;
+let cnhActionTimeout = null;
 
 function post(name, data = {}) {
     return fetch(`https://${resource}/${name}`, {
@@ -249,6 +251,11 @@ function updateSelectedCard() {
     byId("economyTargetPassport").textContent = passport;
     byId("economyTargetSource").textContent = source;
 
+    const cnhTarget = byId("cnhTarget");
+    if (cnhTarget) {
+        cnhTarget.textContent = selectedPlayer ? `${name} (#${passport})` : "Selecione um jogador";
+    }
+
     const modalTarget = byId("modalTarget");
     if (modalTarget) {
         modalTarget.textContent = selectedPlayer ? `#${passport} • ${name}` : "Nenhum jogador selecionado";
@@ -268,6 +275,91 @@ function setEconomyLoading(loading) {
     if (!button) return;
     button.disabled = loading;
     button.textContent = loading ? "Processando..." : "Conceder dinheiro";
+}
+
+function setCnhFeedback(message = "", error = false) {
+    const feedback = byId("cnhFeedback");
+    if (!feedback) return;
+    feedback.textContent = message;
+    feedback.classList.toggle("is-visible", Boolean(message));
+    feedback.classList.toggle("is-error", error);
+}
+
+function setCnhLoading(loading) {
+    const grant = byId("cnhGrant");
+    const revoke = byId("cnhRevoke");
+    if (grant) grant.disabled = loading;
+    if (revoke) revoke.disabled = loading;
+}
+
+function renderCnhStatus(status = "none") {
+    const statusElement = byId("cnhStatus");
+    if (!statusElement) return;
+
+    const normalized = ["active", "suspended", "revoked", "none"].includes(status) ? status : "unknown";
+    const labels = {
+        active: "Ativa",
+        suspended: "Suspensa",
+        revoked: "Revogada",
+        none: "Sem registro",
+        unknown: "Indisponível"
+    };
+    statusElement.dataset.status = normalized;
+    statusElement.textContent = labels[normalized];
+}
+
+function requestCnhLookup() {
+    if (!hasSelectedPlayer(false)) {
+        renderCnhStatus("none");
+        setCnhFeedback("");
+        return;
+    }
+
+    renderCnhStatus("unknown");
+    setCnhFeedback("Consultando CNH...");
+    post("cnhLookup", {
+        passport: selectedPassport(),
+        category: value("cnhCategory")
+    }).catch(() => {
+        renderCnhStatus("unknown");
+        setCnhFeedback("Falha de comunicação com o servidor.", true);
+    });
+}
+
+async function submitCnhAction(action) {
+    if (cnhActionPending || !hasSelectedPlayer()) return;
+
+    const category = value("cnhCategory");
+    const reason = value("cnhReason").trim();
+    if (action !== "grant" && action !== "revoke") return;
+    if (action === "revoke" && !reason) {
+        setCnhFeedback("Informe o motivo da remoção da CNH.", true);
+        return;
+    }
+
+    cnhActionPending = true;
+    setCnhLoading(true);
+    setCnhFeedback(action === "grant" ? "Validando a concessão..." : "Validando a remoção...");
+
+    try {
+        await post("cnhAction", {
+            passport: selectedPassport(),
+            category,
+            action,
+            reason
+        });
+        if (cnhActionPending) {
+            cnhActionTimeout = window.setTimeout(() => {
+                cnhActionPending = false;
+                setCnhLoading(false);
+                setCnhFeedback("O servidor demorou para responder. Consulte novamente antes de repetir a operação.", true);
+            }, 12000);
+        }
+    } catch (error) {
+        cnhActionPending = false;
+        setCnhLoading(false);
+        setCnhFeedback("Falha de comunicação com o servidor.", true);
+    }
 }
 
 function operationId() {
@@ -320,6 +412,7 @@ function selectPlayer(passport) {
     selectedPlayer = players.find(player => String(player.passport || "") === wanted) || null;
     updateSelectedCard();
     renderPlayers();
+    requestCnhLookup();
 }
 
 function renderPlayers() {
@@ -433,6 +526,10 @@ function setActiveTab(tab) {
 
     if (tab === "payments") {
         requestPremiumOrders();
+    }
+
+    if (tab === "permissions") {
+        requestCnhLookup();
     }
 }
 
@@ -686,6 +783,30 @@ window.addEventListener("message", event => {
         selectedPlayer = players.find(player => String(player.passport || "") === previousPassport) || players[0] || null;
         updateSelectedCard();
         renderPlayers();
+        requestCnhLookup();
+    }
+
+    if (action === "cnhResult") {
+        const payload = event.data.payload || {};
+        if (payload.kind === "action") {
+            if (cnhActionTimeout) window.clearTimeout(cnhActionTimeout);
+            cnhActionTimeout = null;
+            cnhActionPending = false;
+            setCnhLoading(false);
+        }
+
+        const responsePassport = String(payload.passport ?? "");
+        const responseCategory = String(payload.category ?? "");
+        const hasCorrelation = responsePassport !== "" && responseCategory !== "";
+        if (hasCorrelation && (responsePassport !== String(selectedPassport()) || responseCategory !== value("cnhCategory"))) return;
+
+        renderCnhStatus(payload.status || "unknown");
+        if (payload.kind === "action") {
+            if (payload.success) byId("cnhReason").value = "";
+            setCnhFeedback(payload.message || (payload.success ? "CNH atualizada." : "Não foi possível concluir a operação."), payload.success !== true);
+        } else {
+            setCnhFeedback(payload.message || "", payload.success !== true);
+        }
     }
 
     if (action === "moneyGrantResult") {
@@ -724,6 +845,9 @@ on("close", "click", closePanel);
 on("playerSearch", "input", renderPlayers);
 on("refreshPlayers", "click", () => post("adminAction", { action: "playersList" }));
 on("jobName", "change", updateJobRanks);
+on("cnhCategory", "change", requestCnhLookup);
+on("cnhGrant", "click", () => submitCnhAction("grant"));
+on("cnhRevoke", "click", () => submitCnhAction("revoke"));
 on("premiumOrderFilter", "change", requestPremiumOrders);
 on("refreshPremiumOrders", "click", requestPremiumOrders);
 on("grantMoney", "click", () => {

@@ -107,9 +107,7 @@ Config.Exam = {
     LimiterRefreshMs = 750,
     ServerWatchdogMs = 2000,
     SpawnSlots = {
-        vec4(-2295.38,375.78,173.99,110.56),
-        vec4(-2283.48,407.87,173.79,124.73),
-        vec4(-2285.92,410.63,173.79,133.23)
+        vec4(-2295.62,375.67,173.65,297.64)
     },
     Route = {
         StartDelayMs = 1200,

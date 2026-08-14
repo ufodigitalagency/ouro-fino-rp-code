@@ -2467,6 +2467,63 @@ exports("AdminLicenseAction",function(PlayerSource,TargetPassport,Category,Actio
     }
 end)
 
+exports("OwnerLicenseAction",function(PlayerSource,TargetPassport,Category,Action,Reason)
+    PlayerSource = tonumber(PlayerSource) or 0
+    local ActorPassport = passport(PlayerSource)
+    if PlayerSource <= 0 or not validPlayer(PlayerSource) or tonumber(ActorPassport) ~= 1 then
+        return {
+            success = false,
+            message = "Acesso negado."
+        }
+    end
+
+    Action = tostring(Action or ""):lower()
+    if Action ~= "grant" and Action ~= "revoke" then
+        return {
+            success = false,
+            message = "Ação de CNH inválida."
+        }
+    end
+
+    Category = normalizeCategory(Category)
+    if not Category then
+        return {
+            success = false,
+            message = "Categoria inválida. Use A, B, C ou D."
+        }
+    end
+
+    Reason = tostring(Reason or ""):gsub("[%c<>]"," "):gsub("%s+"," ")
+    Reason = Reason:match("^%s*(.-)%s*$") or ""
+    if Action == "revoke" and Reason == "" then
+        return {
+            success = false,
+            message = "Informe o motivo da remoção da CNH."
+        }
+    end
+
+    local Args = {
+        tostring(TargetPassport or ""),
+        Category,
+        Reason
+    }
+    local Success,Message,Data = performLicenseAction(
+        PlayerSource,
+        Args,
+        Action,
+        "owner_panel",
+        ActorPassport
+    )
+
+    return {
+        success = Success == true,
+        message = Message or "",
+        passport = Data and Data.Passport or tonumber(TargetPassport),
+        category = Data and Data.Category or Category,
+        auditWritten = Data and Data.AuditWritten == true or false
+    }
+end)
+
 RegisterCommand("cnhdar",function(PlayerSource,Args)
     if PlayerSource <= 0 then
         print("[of_drivingschool] Use ofcnhgrant no console do FXServer.")

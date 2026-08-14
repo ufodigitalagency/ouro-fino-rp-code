@@ -66,6 +66,14 @@ local EconomyOperations = {}
 local EconomyReady = false
 local PlanOperations = {}
 local PremiumOrderOperations = {}
+local CnhOperations = {}
+
+local CnhCategories = {
+    A = true,
+    B = true,
+    C = true,
+    D = true
+}
 
 local Plans = {
     premium = {
@@ -851,6 +859,54 @@ local function buildPlayers()
     end)
 
     return players
+end
+
+local function cnhResult(source,payload)
+    if source and source > 0 and GetPlayerName(source) then
+        TriggerClientEvent("af_owner_panel:cnhResult",source,payload or {
+            success = false,
+            message = "Não foi possível consultar a CNH."
+        })
+    end
+end
+
+local function normalizeCnhCategory(value)
+    local category = tostring(value or ""):upper():match("^%s*(.-)%s*$")
+    return CnhCategories[category] and category or nil
+end
+
+local function validCnhTargetPassport(value)
+    local targetPassport = parseInt(value)
+    if targetPassport <= 0 then
+        return nil
+    end
+
+    local identitySuccess,identity = pcall(vRP.Identity,targetPassport)
+    return identitySuccess and identity and targetPassport or nil
+end
+
+local function cnhStatus(targetPassport,category)
+    if GetResourceState("of_drivingschool") ~= "started" then
+        return nil,"O sistema de CNH está indisponível."
+    end
+
+    local success,licenses = pcall(function()
+        return exports["of_drivingschool"]:ListLicenses(targetPassport)
+    end)
+    if not success or type(licenses) ~= "table" then
+        return nil,"Não foi possível consultar a CNH selecionada."
+    end
+
+    for _,license in ipairs(licenses) do
+        if tostring(license.Category or ""):upper() == category then
+            local status = tostring(license.Status or ""):lower()
+            if status == "active" or status == "suspended" or status == "revoked" then
+                return status,nil
+            end
+        end
+    end
+
+    return "none",nil
 end
 
 local function sendServerState(source)
@@ -1648,6 +1704,126 @@ RegisterNetEvent("af_owner_panel:requestPlayers",function()
     end
 
     TriggerClientEvent("af_owner_panel:players",source,buildPlayers())
+end)
+
+RegisterNetEvent("af_owner_panel:requestCnh",function(payload)
+    local source = source
+    if not isOwner(source) then
+        cnhResult(source,{ success = false, kind = "lookup", message = "Acesso negado." })
+        return
+    end
+
+    payload = type(payload) == "table" and payload or {}
+    local targetPassport = validCnhTargetPassport(payload.passport)
+    local category = normalizeCnhCategory(payload.category)
+    if not targetPassport or not category then
+        cnhResult(source,{
+            success = false,
+            kind = "lookup",
+            passport = targetPassport or parseInt(payload.passport),
+            category = category or tostring(payload.category or ""),
+            message = "Jogador ou categoria de CNH inválida."
+        })
+        return
+    end
+
+    local status,errorMessage = cnhStatus(targetPassport,category)
+    cnhResult(source,{
+        success = status ~= nil,
+        kind = "lookup",
+        passport = targetPassport,
+        category = category,
+        status = status or "unknown",
+        message = errorMessage or ""
+    })
+end)
+
+RegisterNetEvent("af_owner_panel:cnhAction",function(payload)
+    local source = source
+    if not isOwner(source) then
+        cnhResult(source,{ success = false, kind = "action", message = "Acesso negado." })
+        return
+    end
+
+    payload = type(payload) == "table" and payload or {}
+    local targetPassport = validCnhTargetPassport(payload.passport)
+    local category = normalizeCnhCategory(payload.category)
+    local action = tostring(payload.action or ""):lower()
+    local reason = sanitizeReason(payload.reason)
+
+    if not targetPassport or not category or (action ~= "grant" and action ~= "revoke") then
+        cnhResult(source,{
+            success = false,
+            kind = "action",
+            passport = targetPassport or parseInt(payload.passport),
+            category = category or tostring(payload.category or ""),
+            message = "Jogador, categoria ou ação de CNH inválida."
+        })
+        return
+    end
+
+    if action == "revoke" and reason == "" then
+        cnhResult(source,{
+            success = false,
+            kind = "action",
+            passport = targetPassport,
+            category = category,
+            message = "Informe o motivo da remoção da CNH."
+        })
+        return
+    end
+
+    if GetResourceState("of_drivingschool") ~= "started" then
+        cnhResult(source,{
+            success = false,
+            kind = "action",
+            passport = targetPassport,
+            category = category,
+            message = "O sistema de CNH está indisponível."
+        })
+        return
+    end
+
+    if CnhOperations[source] then
+        cnhResult(source,{
+            success = false,
+            kind = "action",
+            passport = targetPassport,
+            category = category,
+            message = "Já existe uma operação de CNH em andamento."
+        })
+        return
+    end
+
+    CnhOperations[source] = true
+    local callSuccess,result = pcall(function()
+        return exports["of_drivingschool"]:OwnerLicenseAction(source,targetPassport,category,action,reason)
+    end)
+    CnhOperations[source] = nil
+
+    if not callSuccess or type(result) ~= "table" then
+        print(("[af_owner_panel] cnh_action_failed owner_source=%s target=%s category=%s action=%s"):format(source,targetPassport,category,action))
+        cnhResult(source,{
+            success = false,
+            kind = "action",
+            passport = targetPassport,
+            category = category,
+            message = "Não foi possível concluir a operação de CNH."
+        })
+        return
+    end
+
+    local status,statusError = cnhStatus(targetPassport,category)
+    cnhResult(source,{
+        success = result.success == true,
+        kind = "action",
+        action = action,
+        passport = targetPassport,
+        category = category,
+        status = status or "unknown",
+        message = result.message or statusError or "",
+        auditWritten = result.auditWritten == true
+    })
 end)
 
 RegisterNetEvent("af_owner_panel:requestServerState",function()
