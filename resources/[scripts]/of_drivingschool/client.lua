@@ -10,7 +10,6 @@ local ActiveExam = nil
 local StartBusy = false
 local ResourceStopping = false
 local ResultGeneration = 0
-local RecordedRoutePoints = {}
 
 local function notify(Message,Color,Duration)
     TriggerEvent("Notify","Autoescola",Message,Color or "amarelo",Duration or 5000)
@@ -1036,58 +1035,6 @@ RegisterCommand("ofcnhdiag",function()
         boolText(State.HighBeamsOn),
         State.SpeedKmh
     ))
-end,false)
-
--- TEMPORARY development-only helper. It records local coordinates in memory
--- and never calls the server, mutates an exam session or persists data.
-RegisterCommand("ofcnhroutepoint",function()
-    if Config.DebugRouteRecorder ~= true then
-        print("[of_drivingschool] ROUTE_RECORDER disabled")
-        return
-    end
-
-    local Ped = PlayerPedId()
-    local Vehicle = GetVehiclePedIsIn(Ped,false)
-    local Entity = Vehicle ~= 0 and Vehicle or Ped
-    local Coords = GetEntityCoords(Entity)
-    local Heading = GetEntityHeading(Entity)
-    RecordedRoutePoints[#RecordedRoutePoints + 1] = {
-        x = Coords.x,
-        y = Coords.y,
-        z = Coords.z,
-        heading = Heading
-    }
-    print(("[of_drivingschool] ROUTE_POINT vec3(%.4f,%.4f,%.4f) heading=%.2f"):format(Coords.x,Coords.y,Coords.z,Heading))
-end,false)
-
-RegisterCommand("ofcnhroutepoints",function()
-    if Config.DebugRouteRecorder ~= true then
-        print("[of_drivingschool] ROUTE_RECORDER disabled")
-        return
-    end
-
-    print(("[of_drivingschool] ROUTE_POINTS_BEGIN count=%s"):format(#RecordedRoutePoints))
-    local Radius = tonumber(Config.Exam.Route.DefaultRadius) or 6.0
-    for Index,Point in ipairs(RecordedRoutePoints) do
-        print(("    { Coords = vec3(%.4f,%.4f,%.4f), Radius = %.1f, Label = \"Ponto %s\" },"):format(
-            Point.x,
-            Point.y,
-            Point.z,
-            Radius,
-            Index
-        ))
-    end
-    print("[of_drivingschool] ROUTE_POINTS_END")
-end,false)
-
-RegisterCommand("ofcnhrouteclear",function()
-    if Config.DebugRouteRecorder ~= true then
-        print("[of_drivingschool] ROUTE_RECORDER disabled")
-        return
-    end
-
-    RecordedRoutePoints = {}
-    print("[of_drivingschool] ROUTE_POINTS_CLEARED")
 end,false)
 
 RegisterCommand("ofcnhcancelar",function()
