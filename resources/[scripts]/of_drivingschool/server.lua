@@ -52,6 +52,20 @@ local CHECKLIST_TRANSITIONS = {
     }
 }
 
+local function routeCheckpoints()
+    local Route = Config.Exam and Config.Exam.Route
+    return Route and type(Route.Checkpoints) == "table" and Route.Checkpoints or {}
+end
+
+local function checkpointRadius(Point)
+    return math.max(0.5,tonumber(Point and Point.Radius) or tonumber(Config.Exam.Route.DefaultRadius) or 6.0)
+end
+
+local function headingDifference(First,Second)
+    local Difference = math.abs(((tonumber(First) or 0.0) - (tonumber(Second) or 0.0)) % 360.0)
+    return math.min(Difference,360.0 - Difference)
+end
+
 local function response(Success,Code,Message,Data)
     local Result = Data or {}
     Result.success = Success == true
@@ -595,7 +609,7 @@ local function registeredVehicle(Session)
     end
 
     local Vehicle = NetworkGetEntityFromNetworkId(tonumber(Session.VehicleNetId) or 0)
-    if not Vehicle or Vehicle == 0 or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 then
+    if not Vehicle or Vehicle == 0 or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 or GetEntityHealth(Vehicle) <= 0 then
         return 0
     end
 
@@ -640,6 +654,106 @@ local function cleanupSession(PlayerSource,Reason,NotifyClient,Message)
     end
 
     return Session
+end
+
+local function registeredExamDriver(PlayerSource,Session,Network)
+    if not Session or tonumber(Network) ~= tonumber(Session.VehicleNetId) then
+        return 0,0,"invalid_vehicle"
+    end
+
+    local Vehicle = registeredVehicle(Session)
+    local Ped = playerPed(PlayerSource)
+    if Vehicle == 0 or Ped == 0 then
+        return 0,Ped,"vehicle_missing"
+    end
+
+    if GetVehiclePedIsIn(Ped,false) ~= Vehicle or GetPedInVehicleSeat(Vehicle,-1) ~= Ped then
+        return Vehicle,Ped,"driver_required"
+    end
+
+    local ActualPlate = tostring(GetVehicleNumberPlateText(Vehicle) or ""):gsub("%s+",""):upper()
+    local ExpectedPlate = tostring(Session.Plate or ""):gsub("%s+",""):upper()
+    if ActualPlate ~= ExpectedPlate then
+        return Vehicle,Ped,"invalid_vehicle_plate"
+    end
+
+    return Vehicle,Ped,nil
+end
+
+local function signedLongitudinalSpeed(Vehicle)
+    local VelocitySuccess,Velocity = pcall(GetEntityVelocity,Vehicle)
+    local HeadingSuccess,Heading = pcall(GetEntityHeading,Vehicle)
+    Heading = tonumber(Heading)
+    if not VelocitySuccess or not HeadingSuccess or not Velocity or not Heading then
+        return nil,"entity_direction_unavailable"
+    end
+
+    local Radians = math.rad(Heading)
+    local ForwardX = -math.sin(Radians)
+    local ForwardY = math.cos(Radians)
+    local VelocityX = tonumber(Velocity.x)
+    local VelocityY = tonumber(Velocity.y)
+    if not VelocityX or not VelocityY then
+        return nil,"entity_velocity_unavailable"
+    end
+
+    return (VelocityX * ForwardX) + (VelocityY * ForwardY),nil
+end
+
+local function parkingGeometryValid(PlayerSource,Session)
+    local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Session and Session.VehicleNetId)
+    if DriverError then
+        return false,DriverError,Vehicle
+    end
+
+    local Parking = Config.Exam.Parking
+    local Center = Parking and Parking.Center
+    if not Center then
+        return false,"parking_unavailable",Vehicle
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    local Distance = #(Coords - vector3(Center.x,Center.y,Center.z))
+    if Distance > (tonumber(Parking.PositionTolerance) or 1.25) then
+        return false,"parking_position",Vehicle
+    end
+
+    if headingDifference(GetEntityHeading(Vehicle),Center.w) > (tonumber(Parking.HeadingTolerance) or 8.0) then
+        return false,"parking_heading",Vehicle
+    end
+
+    if GetEntitySpeed(Vehicle) > (tonumber(Parking.StoppedSpeedMps) or 0.15) then
+        return false,"parking_moving",Vehicle
+    end
+
+    if Parking.RequireReverse == true and Session.UsedReverse ~= true then
+        return false,"parking_reverse_required",Vehicle
+    end
+
+    return true,nil,Vehicle
+end
+
+local function parkingTimedOut(Session)
+    local StartedAt = Session and tonumber(Session.ParkingStartedAt)
+    local TimeoutMs = math.max(1000,tonumber(Config.Exam.Parking.TimeoutMs) or 180000)
+    return not StartedAt or GetGameTimer() - StartedAt >= TimeoutMs
+end
+
+local function finishExamFailure(PlayerSource,Reason,Message)
+    local Session = ExamSessions[PlayerSource]
+    if not Session then
+        return false
+    end
+
+    Session.State = "EXAM_FAILED"
+    local Token = Session.Token
+    local Category = Session.Category
+    debugLog(("exam_failed source=%s passport=%s reason=%s"):format(PlayerSource,Session.Passport,tostring(Reason)))
+    cleanupSession(PlayerSource,Reason or "exam_failed",false)
+    if validPlayer(PlayerSource) then
+        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,Token,false,Message or "A prova pratica nao foi concluida.",Category)
+    end
+    return true
 end
 
 
@@ -801,6 +915,9 @@ function API.StartExam(RequestedCategory)
         State = "RESERVED",
         RejectedSlots = {},
         VehicleNetId = nil,
+        RouteIndex = 0,
+        UsedReverse = false,
+        PassConsumed = false,
         CreatedAt = os.time(),
         LastActivityAt = os.time(),
         ExpiresAt = os.time() + Config.Exam.SessionTimeoutSeconds
@@ -1012,6 +1129,286 @@ function API.AdvanceChecklist(Token,Step,Network)
 
     return response(true,"checklist_advanced",Config.Checklist[Session.State],{
         state = Session.State
+    })
+end
+
+function API.BeginRoute(Token,Network)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"begin_route",500) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","A sessao da prova nao esta mais disponivel.",{ terminate = true })
+    end
+
+    if Session.State ~= "READY_FOR_ROUTE" then
+        return response(false,"invalid_transition","A preparacao da prova ainda nao foi concluida.")
+    end
+
+    if Session.Category ~= "B" or Config.Exam.Category ~= "B" then
+        return response(false,"invalid_category","A sessao nao corresponde a prova Categoria B.",{ terminate = true })
+    end
+
+    local Points = routeCheckpoints()
+    if #Points == 0 or not Points[1] or not Points[1].Coords then
+        return response(false,"route_unavailable","O percurso ainda precisa ser capturado e aprovado.")
+    end
+
+    local _,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    Session.State = "ROUTE_ACTIVE"
+    Session.RouteIndex = 1
+    Session.RouteStartedAt = os.time()
+    Session.LastActivityAt = os.time()
+    debugLog(("route_started source=%s passport=%s total=%s"):format(PlayerSource,Session.Passport,#Points))
+    return response(true,"route_started","Percurso iniciado.",{
+        state = Session.State,
+        routeIndex = Session.RouteIndex,
+        total = #Points
+    })
+end
+
+function API.ReachRouteCheckpoint(Token,Network,Index)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"route_checkpoint",200) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","A sessao da prova nao esta mais disponivel.",{ terminate = true })
+    end
+
+    if Session.State ~= "ROUTE_ACTIVE" then
+        return response(false,"invalid_transition","O percurso nao esta ativo.")
+    end
+
+    local Expected = tonumber(Session.RouteIndex)
+    local Received = tonumber(Index)
+    if not Expected or Received ~= Expected then
+        return response(false,"invalid_checkpoint_sequence","O ponto informado nao corresponde a sequencia do percurso.")
+    end
+
+    local Points = routeCheckpoints()
+    local Point = Points[Expected]
+    if not Point or not Point.Coords then
+        return response(false,"route_configuration_lost","A configuracao do percurso ficou indisponivel.",{ terminate = true })
+    end
+
+    local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    if #(Coords - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z)) > checkpointRadius(Point) then
+        return response(false,"checkpoint_too_far","O veiculo ainda nao chegou ao ponto atual do percurso.")
+    end
+
+    Session.LastActivityAt = os.time()
+    debugLog(("checkpoint_reached source=%s passport=%s index=%s total=%s"):format(PlayerSource,Session.Passport,Expected,#Points))
+    if Expected >= #Points then
+        Session.State = "ROUTE_COMPLETE"
+        Session.RouteCompletedAt = os.time()
+        debugLog(("route_completed source=%s passport=%s"):format(PlayerSource,Session.Passport))
+        return response(true,"route_complete","Percurso concluido.",{
+            state = Session.State,
+            completed = Expected,
+            total = #Points
+        })
+    end
+
+    Session.RouteIndex = Expected + 1
+    return response(true,"checkpoint_reached","Ponto do percurso concluido.",{
+        state = Session.State,
+        routeIndex = Session.RouteIndex,
+        completed = Expected,
+        total = #Points
+    })
+end
+
+function API.BeginParking(Token,Network)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"begin_parking",500) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","A sessao da prova nao esta mais disponivel.",{ terminate = true })
+    end
+
+    if Session.State ~= "ROUTE_COMPLETE" then
+        return response(false,"invalid_transition","O percurso ainda nao foi concluido.")
+    end
+
+    if not Config.Exam.Parking or not Config.Exam.Parking.Center then
+        return response(false,"parking_unavailable","A area de baliza nao esta configurada.",{ terminate = true })
+    end
+
+    local _,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    local TimeoutMs = math.max(1000,tonumber(Config.Exam.Parking.TimeoutMs) or 180000)
+    Session.State = "PARKING_ACTIVE"
+    Session.UsedReverse = false
+    Session.ParkingStartedAt = GetGameTimer()
+    Session.ParkingExpiresAt = os.time() + math.ceil(TimeoutMs / 1000)
+    Session.ParkingHoldStartedAt = nil
+    Session.LastActivityAt = os.time()
+    debugLog(("parking_started source=%s passport=%s timeout_ms=%s"):format(PlayerSource,Session.Passport,TimeoutMs))
+    return response(true,"parking_started","Prova de baliza iniciada.",{
+        state = Session.State,
+        timeoutMs = TimeoutMs,
+        usedReverse = false
+    })
+end
+
+function API.MarkParkingReverse(Token,Network)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"parking_reverse",200) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","A sessao da prova nao esta mais disponivel.",{ terminate = true })
+    end
+
+    if Session.State ~= "PARKING_ACTIVE" then
+        return response(false,"invalid_transition","A prova de baliza nao esta ativa.")
+    end
+
+    local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    local SignedSpeed,DirectionError = signedLongitudinalSpeed(Vehicle)
+    if not SignedSpeed then
+        print(("[of_drivingschool] WARN parking_reverse_direction_unavailable source=%s passport=%s reason=%s"):format(
+            PlayerSource,
+            Session.Passport,
+            tostring(DirectionError)
+        ))
+        return response(false,"reverse_direction_unavailable","Nao foi possivel confirmar a direcao do veiculo.")
+    end
+
+    if SignedSpeed > -(tonumber(Config.Exam.Parking.ReverseSpeedMps) or 0.20) then
+        return response(false,"reverse_motion_unconfirmed","")
+    end
+
+    Session.UsedReverse = true
+    Session.LastActivityAt = os.time()
+    debugLog(("parking_reverse_detected source=%s passport=%s signed_speed=%.3f"):format(PlayerSource,Session.Passport,SignedSpeed))
+    return response(true,"parking_reverse_detected","",{ usedReverse = true })
+end
+
+function API.CompleteParking(Token,Network)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"complete_parking",250) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","A sessao da prova nao esta mais disponivel.",{ terminate = true })
+    end
+
+    if Session.State ~= "PARKING_ACTIVE" then
+        return response(false,"invalid_transition","A prova de baliza nao esta ativa.")
+    end
+
+    if Session.PassConsumed then
+        return response(false,"pass_consumed","O resultado desta prova ja foi processado.")
+    end
+
+    if Session.Category ~= "B" or Config.Exam.Category ~= "B" then
+        return response(false,"invalid_category","A sessao nao corresponde a prova Categoria B.",{ terminate = true })
+    end
+
+    if tonumber(Network) ~= tonumber(Session.VehicleNetId) then
+        return response(false,"invalid_vehicle","Este nao e o veiculo registrado para a prova.")
+    end
+
+    if parkingTimedOut(Session) then
+        finishExamFailure(PlayerSource,"parking_timeout","Tempo limite da baliza excedido.")
+        return response(false,"parking_timeout","Tempo limite da baliza excedido.",{ terminate = true })
+    end
+
+    local Valid,ValidationError = parkingGeometryValid(PlayerSource,Session)
+    if not Valid then
+        return response(false,ValidationError,"A baliza ainda nao atende a todos os requisitos.")
+    end
+
+    local HoldMs = math.max(0,tonumber(Config.Exam.Parking.HoldMs) or 3000)
+    if not Session.ParkingHoldStartedAt or GetGameTimer() - Session.ParkingHoldStartedAt < HoldMs then
+        return response(false,"parking_hold_pending","")
+    end
+
+    Session.PassConsumed = true
+    Session.State = "PARKING_COMPLETE"
+    local LicenseCheckSuccess,AlreadyLicensed = pcall(hasLicense,Session.Passport,Session.Category)
+    if not LicenseCheckSuccess then
+        Session.PassConsumed = false
+        Session.State = "PARKING_ACTIVE"
+        print(("[of_drivingschool] CRITICAL exam_license_check_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
+        return response(false,"license_check_failed","Nao foi possivel validar a CNH agora.")
+    end
+
+    local GrantSuccess,Granted = true,true
+    if not AlreadyLicensed then
+        GrantSuccess,Granted = pcall(grantLicense,Session.Passport,Session.Category)
+    end
+
+    if not GrantSuccess or not Granted then
+        if ExamSessions[PlayerSource] == Session then
+            Session.PassConsumed = false
+            Session.State = "PARKING_ACTIVE"
+        end
+        print(("[of_drivingschool] CRITICAL exam_license_grant_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
+        return response(false,"license_grant_failed","Nao foi possivel registrar a CNH agora.")
+    end
+
+    local AuditSuccess,AuditError = pcall(writeAudit,Session.Passport,Session.Category,"exam_pass",nil,"practical_exam","Prova pratica concluida com percurso e baliza.")
+    if not AuditSuccess then
+        print(("[of_drivingschool] CRITICAL exam_audit_failed source=%s passport=%s category=%s error=%s"):format(
+            PlayerSource,
+            Session.Passport,
+            Session.Category,
+            tostring(AuditError)
+        ))
+    end
+
+    local ResultToken = Session.Token
+    local ResultCategory = Session.Category
+    Session.State = "EXAM_PASSED"
+    debugLog(("exam_passed source=%s passport=%s category=%s already_active=%s"):format(
+        PlayerSource,
+        Session.Passport,
+        Session.Category,
+        tostring(AlreadyLicensed)
+    ))
+
+    if ExamSessions[PlayerSource] == Session then
+        cleanupSession(PlayerSource,"exam_passed",false)
+    end
+    if validPlayer(PlayerSource) then
+        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,ResultToken,true,"Voce foi aprovado na prova pratica.",ResultCategory)
+    end
+
+    return response(true,"exam_passed","Voce foi aprovado na prova pratica.",{
+        state = "EXAM_PASSED",
+        category = ResultCategory,
+        auditWritten = AuditSuccess,
+        alreadyLicensed = AlreadyLicensed == true
     })
 end
 
@@ -1303,6 +1700,32 @@ CreateThread(function()
     local Success,Error = pcall(prepareDatabase)
     if not Success then
         print(("[of_drivingschool] Falha ao preparar banco de CNH: %s"):format(tostring(Error)))
+    end
+end)
+
+CreateThread(function()
+    while not ResourceStopping do
+        Wait(math.max(50,tonumber(Config.Exam.Parking.ValidationIntervalMs) or 100))
+
+        local TimedOut = {}
+        for PlayerSource,Session in pairs(ExamSessions) do
+            if Session.State == "PARKING_ACTIVE" then
+                if parkingTimedOut(Session) then
+                    TimedOut[#TimedOut + 1] = PlayerSource
+                else
+                    local Valid = parkingGeometryValid(PlayerSource,Session)
+                    if Valid then
+                        Session.ParkingHoldStartedAt = Session.ParkingHoldStartedAt or GetGameTimer()
+                    else
+                        Session.ParkingHoldStartedAt = nil
+                    end
+                end
+            end
+        end
+
+        for _,PlayerSource in ipairs(TimedOut) do
+            finishExamFailure(PlayerSource,"parking_timeout","Tempo limite da baliza excedido.")
+        end
     end
 end)
 

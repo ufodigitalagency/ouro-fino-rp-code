@@ -1,6 +1,8 @@
 Config = {}
 
 Config.Debug = false
+-- TEMPORARY: remove after the final road checkpoints are captured and approved.
+Config.DebugRouteRecorder = true
 Config.DefaultCategory = "B"
 
 Config.Categories = {
@@ -63,6 +65,58 @@ Config.Exam = {
         vec4(-2295.38,375.78,173.99,110.56),
         vec4(-2283.48,407.87,173.79,124.73),
         vec4(-2285.92,410.63,173.79,133.23)
+    },
+    Route = {
+        StartDelayMs = 1200,
+        DefaultRadius = 6.0,
+        Blip = {
+            Sprite = 1,
+            Color = 5,
+            RouteColor = 5,
+            Scale = 0.85
+        },
+        Marker = {
+            Type = 1,
+            DrawDistance = 80.0,
+            Height = 1.0,
+            Red = 216,
+            Green = 173,
+            Blue = 85,
+            Alpha = 150
+        },
+        -- Intentionally empty until the road course is captured and approved in runtime.
+        Checkpoints = {}
+    },
+    Parking = {
+        Center = vec4(-2338.02,382.61,173.79,113.39),
+        FrontReference = vec4(-2343.03,380.27,174.04,116.23),
+        RearReference = vec4(-2332.78,385.07,173.99,110.56),
+        PositionTolerance = 1.25,
+        HeadingTolerance = 8.0,
+        HoldMs = 3000,
+        TimeoutMs = 180000,
+        RequireReverse = true,
+        StoppedSpeedMps = 0.15,
+        ReverseSpeedMps = 0.20,
+        ValidationIntervalMs = 100,
+        FeedbackThrottleMs = 4000,
+        Blip = {
+            Sprite = 1,
+            Color = 5,
+            RouteColor = 5,
+            Scale = 0.85
+        },
+        Marker = {
+            Type = 1,
+            DrawDistance = 80.0,
+            CenterHeight = 0.35,
+            ReferenceRadius = 0.45,
+            ReferenceHeight = 1.25,
+            Red = 216,
+            Green = 173,
+            Blue = 85,
+            Alpha = 150
+        }
     }
 }
 
@@ -71,38 +125,7 @@ Config.Checklist = {
     WAITING_FOR_SEATBELT = "Coloque o cinto de seguranca.",
     WAITING_FOR_ENGINE = "Ligue o motor.",
     WAITING_FOR_LIGHTS = "Ligue os farois.",
-    READY_FOR_ROUTE = "Preparacao concluida. Estrutura da prova pratica pronta."
-}
-
--- As rotas reais serao cadastradas apenas depois da coleta e validacao runtime.
-Config.Routes = {
-    -- Route01 = {
-    --     Name = "Rota media 01",
-    --     Enabled = true,
-    --     Weight = 1,
-    --     Checkpoints = {
-    --         {
-    --             Coords = vec3(0.0,0.0,0.0),
-    --             SpeedLimit = 50.0,
-    --             StopRequired = false,
-    --             TrafficLightZone = nil
-    --         }
-    --     },
-    --     ReturnToParking = vec3(0.0,0.0,0.0)
-    -- }
-}
-
-Config.ParkingTest = {
-    Enabled = false,
-    FrontVehicle = vec4(-2343.03,380.27,174.04,116.23),
-    CandidateCenter = vec4(-2338.02,382.61,173.79,113.39),
-    RearVehicle = vec4(-2332.78,385.07,173.99,110.56),
-    PositionTolerance = 1.25,
-    HeadingTolerance = 8.0,
-    StopConfirmationMs = 3000,
-    TimeoutSeconds = 180,
-    EntryMustBeReverse = true,
-    ImmediateFailOnContact = true
+    READY_FOR_ROUTE = "Percurso liberado. Siga a rota indicada."
 }
 
 Config.ResultUi = {

@@ -10,6 +10,7 @@ local ActiveExam = nil
 local StartBusy = false
 local ResourceStopping = false
 local ResultGeneration = 0
+local RecordedRoutePoints = {}
 
 local function notify(Message,Color,Duration)
     TriggerEvent("Notify","Autoescola",Message,Color or "amarelo",Duration or 5000)
@@ -77,6 +78,80 @@ local function readVehicleState()
         HighBeamsOn = nativeBool(HighBeamsOn),
         SpeedKmh = math.floor((GetEntitySpeed(Vehicle) * 3.6) + 0.5)
     }
+end
+
+local function routeCheckpoints()
+    local Route = Config.Exam and Config.Exam.Route
+    return Route and type(Route.Checkpoints) == "table" and Route.Checkpoints or {}
+end
+
+local function checkpointRadius(Point)
+    return math.max(0.5,tonumber(Point and Point.Radius) or tonumber(Config.Exam.Route.DefaultRadius) or 6.0)
+end
+
+local function headingDifference(First,Second)
+    local Difference = math.abs(((tonumber(First) or 0.0) - (tonumber(Second) or 0.0)) % 360.0)
+    return math.min(Difference,360.0 - Difference)
+end
+
+local function clearExamDestination(Exam)
+    local Blip = Exam and Exam.DestinationBlip
+    if Blip and DoesBlipExist(Blip) then
+        SetBlipRoute(Blip,false)
+        RemoveBlip(Blip)
+    end
+
+    if Exam then
+        Exam.DestinationBlip = nil
+    end
+end
+
+local function setExamDestination(Exam,Coords,Label,BlipConfig)
+    if not Exam or not Coords then
+        return false
+    end
+
+    clearExamDestination(Exam)
+    local Blip = AddBlipForCoord(Coords.x,Coords.y,Coords.z)
+    if not Blip or Blip == 0 then
+        return false
+    end
+
+    BlipConfig = BlipConfig or {}
+    SetBlipSprite(Blip,tonumber(BlipConfig.Sprite) or 1)
+    SetBlipColour(Blip,tonumber(BlipConfig.Color) or 5)
+    SetBlipScale(Blip,tonumber(BlipConfig.Scale) or 0.85)
+    SetBlipAsShortRange(Blip,false)
+    SetBlipRoute(Blip,true)
+    SetBlipRouteColour(Blip,tonumber(BlipConfig.RouteColor) or tonumber(BlipConfig.Color) or 5)
+    BeginTextCommandSetBlipName("STRING")
+    AddTextComponentString(tostring(Label or "Autoescola"))
+    EndTextCommandSetBlipName(Blip)
+    Exam.DestinationBlip = Blip
+    return true
+end
+
+local function clearPracticalState(Exam)
+    if not Exam then
+        return
+    end
+
+    clearExamDestination(Exam)
+    Exam.RouteIndex = nil
+    Exam.RouteAdvancing = false
+    Exam.RouteStarting = false
+    Exam.RouteUnavailable = false
+    Exam.NextRouteStartAt = nil
+    Exam.ParkingStarting = false
+    Exam.ParkingStartedAt = nil
+    Exam.ParkingHoldStartedAt = nil
+    Exam.UsedReverse = false
+    Exam.ReversePending = false
+    Exam.PassRequestPending = false
+    Exam.NextPassRequestAt = nil
+    Exam.LastParkingFeedback = nil
+    Exam.LastParkingFeedbackAt = nil
+    Exam.LastSeatbeltWarningAt = nil
 end
 
 local function loadModel(ModelName,TimeoutMs)
@@ -420,6 +495,7 @@ local function cleanupExam(DeleteVehicle)
     local Exam = ActiveExam
     ActiveExam = nil
     hideChecklistHud()
+    clearPracticalState(Exam)
 
     if DeleteVehicle ~= false then
         deleteExamVehicle(Exam)
@@ -593,6 +669,280 @@ local function createExamVehicle(Reservation)
     return true
 end
 
+local function setRouteDestination(Exam,Index)
+    local Points = routeCheckpoints()
+    local Point = Points[tonumber(Index) or 0]
+    if not Point or not Point.Coords then
+        clearExamDestination(Exam)
+        return false
+    end
+
+    Exam.RouteIndex = tonumber(Index)
+    local Label = Point.Label or ("Percurso %s/%s"):format(Exam.RouteIndex,#Points)
+    return setExamDestination(Exam,Point.Coords,Label,Config.Exam.Route.Blip)
+end
+
+local function setParkingDestination(Exam)
+    local Parking = Config.Exam.Parking
+    return setExamDestination(Exam,Parking and Parking.Center,"Area de baliza",Parking and Parking.Blip)
+end
+
+local function handlePracticalFailure(Exam,Result)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    if Result and Result.terminate then
+        cleanupExam(true)
+    end
+
+    if Result and Result.message and Result.message ~= "" then
+        notify(Result.message,"vermelho")
+    end
+end
+
+local function beginRoute()
+    local Exam = ActiveExam
+    if not Exam or Exam.State ~= "READY_FOR_ROUTE" or Exam.RouteStarting or Exam.RouteUnavailable then
+        return
+    end
+
+    local State = readVehicleState()
+    if not State.InVehicle or State.Vehicle ~= Exam.Vehicle or not State.IsDriver then
+        return
+    end
+
+    Exam.RouteStarting = true
+    local Result = vSERVER.BeginRoute(Exam.Token,Exam.NetId)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    Exam.RouteStarting = false
+    if not Result or not Result.success then
+        if Result and Result.code == "route_unavailable" then
+            Exam.RouteUnavailable = true
+        else
+            Exam.NextRouteStartAt = GetGameTimer() + 1000
+        end
+        handlePracticalFailure(Exam,Result)
+        return
+    end
+
+    Exam.State = "ROUTE_ACTIVE"
+    Exam.RouteIndex = tonumber(Result.routeIndex) or 1
+    hideChecklistHud()
+    setRouteDestination(Exam,Exam.RouteIndex)
+    notify("Percurso iniciado. Siga a rota indicada.","verde",6000)
+    debugLog(("route_started index=%s total=%s"):format(Exam.RouteIndex,tostring(Result.total)))
+end
+
+local beginParking
+
+local function reachRouteCheckpoint()
+    local Exam = ActiveExam
+    if not Exam or Exam.State ~= "ROUTE_ACTIVE" or Exam.RouteAdvancing then
+        return
+    end
+
+    local Index = tonumber(Exam.RouteIndex)
+    if not Index then
+        return
+    end
+
+    Exam.RouteAdvancing = true
+    local Result = vSERVER.ReachRouteCheckpoint(Exam.Token,Exam.NetId,Index)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    Exam.RouteAdvancing = false
+    if not Result or not Result.success then
+        handlePracticalFailure(Exam,Result)
+        return
+    end
+
+    debugLog(("checkpoint_reached index=%s total=%s"):format(Index,tostring(Result.total)))
+    if Result.state == "ROUTE_COMPLETE" then
+        Exam.State = "ROUTE_COMPLETE"
+        clearExamDestination(Exam)
+        notify("Percurso concluido. Siga ate a area de baliza.","verde",7000)
+        debugLog("route_completed")
+        beginParking()
+        return
+    end
+
+    Exam.State = "ROUTE_ACTIVE"
+    Exam.RouteIndex = tonumber(Result.routeIndex) or (Index + 1)
+    setRouteDestination(Exam,Exam.RouteIndex)
+    notify(("Percurso %s/%s"):format(tostring(Result.completed or Index),tostring(Result.total or #routeCheckpoints())),"verde",3000)
+end
+
+beginParking = function()
+    local Exam = ActiveExam
+    if not Exam or Exam.State ~= "ROUTE_COMPLETE" or Exam.ParkingStarting then
+        return
+    end
+
+    local State = readVehicleState()
+    if not State.InVehicle or State.Vehicle ~= Exam.Vehicle or not State.IsDriver then
+        return
+    end
+
+    Exam.ParkingStarting = true
+    local Result = vSERVER.BeginParking(Exam.Token,Exam.NetId)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    Exam.ParkingStarting = false
+    if not Result or not Result.success then
+        handlePracticalFailure(Exam,Result)
+        return
+    end
+
+    Exam.State = "PARKING_ACTIVE"
+    Exam.ParkingStartedAt = GetGameTimer()
+    Exam.ParkingHoldStartedAt = nil
+    Exam.UsedReverse = Result.usedReverse == true
+    Exam.ReversePending = false
+    Exam.PassRequestPending = false
+    setParkingDestination(Exam)
+    notify("Baliza: use a marcha re e posicione o veiculo na vaga.","amarelo",7000)
+    debugLog("parking_started")
+end
+
+local function parkingFeedback(Exam,Key,Message)
+    local Now = GetGameTimer()
+    local Throttle = tonumber(Config.Exam.Parking.FeedbackThrottleMs) or 4000
+    if Exam.LastParkingFeedback ~= Key or Now >= (Exam.LastParkingFeedbackAt or 0) + Throttle then
+        Exam.LastParkingFeedback = Key
+        Exam.LastParkingFeedbackAt = Now
+        notify(Message,"amarelo",3500)
+    end
+end
+
+local function markParkingReverse(Exam)
+    if Exam.UsedReverse or Exam.ReversePending then
+        return
+    end
+
+    Exam.ReversePending = true
+    local Result = vSERVER.MarkParkingReverse(Exam.Token,Exam.NetId)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    Exam.ReversePending = false
+    if Result and Result.success then
+        Exam.UsedReverse = true
+        debugLog("parking_reverse_detected")
+    elseif Result and Result.terminate then
+        handlePracticalFailure(Exam,Result)
+    end
+end
+
+local function completeParking(Exam)
+    local Now = GetGameTimer()
+    if Exam.PassRequestPending or Now < (Exam.NextPassRequestAt or 0) then
+        return
+    end
+
+    Exam.PassRequestPending = true
+    Exam.NextPassRequestAt = Now + 500
+    local Result = vSERVER.CompleteParking(Exam.Token,Exam.NetId)
+    if ActiveExam ~= Exam then
+        return
+    end
+
+    Exam.PassRequestPending = false
+    if not Result or not Result.success then
+        if Result and Result.code == "parking_hold_pending" then
+            return
+        end
+        handlePracticalFailure(Exam,Result)
+        return
+    end
+
+    Exam.State = "PARKING_COMPLETE"
+    debugLog("parking_completed")
+    cleanupExam(true)
+    showResult("approved",Result.message or "Voce foi aprovado na prova pratica.",Result.category or Config.Exam.Category)
+    debugLog("exam_passed")
+end
+
+local function processRoute(Exam,State)
+    if State.Seatbelt ~= true then
+        local Now = GetGameTimer()
+        if Now >= (Exam.LastSeatbeltWarningAt or 0) then
+            Exam.LastSeatbeltWarningAt = Now + 5000
+            notify("Coloque o cinto para continuar a prova.","amarelo",4500)
+        end
+        return
+    end
+
+    Exam.LastSeatbeltWarningAt = nil
+    local Point = routeCheckpoints()[tonumber(Exam.RouteIndex) or 0]
+    if not Point or not Point.Coords then
+        cancelActiveExam("route_configuration_lost","A configuracao do percurso ficou indisponivel.")
+        return
+    end
+
+    if #(GetEntityCoords(Exam.Vehicle) - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z)) <= checkpointRadius(Point) then
+        reachRouteCheckpoint()
+    end
+end
+
+local function processParking(Exam,State)
+    local Parking = Config.Exam.Parking
+    local Now = GetGameTimer()
+    if State.Seatbelt ~= true then
+        Exam.ParkingHoldStartedAt = nil
+        if Now >= (Exam.LastSeatbeltWarningAt or 0) then
+            Exam.LastSeatbeltWarningAt = Now + 5000
+            notify("Coloque o cinto para continuar a prova.","amarelo",4500)
+        end
+        return
+    end
+
+    Exam.LastSeatbeltWarningAt = nil
+    local LocalSpeed = GetEntitySpeedVector(Exam.Vehicle,true)
+    if not Exam.UsedReverse and LocalSpeed and tonumber(LocalSpeed.y) and LocalSpeed.y < -(tonumber(Parking.ReverseSpeedMps) or 0.20) then
+        markParkingReverse(Exam)
+    end
+
+    local Coords = GetEntityCoords(Exam.Vehicle)
+    local Center = Parking.Center
+    local Distance = #(Coords - vector3(Center.x,Center.y,Center.z))
+    local HeadingValid = headingDifference(GetEntityHeading(Exam.Vehicle),Center.w) <= (tonumber(Parking.HeadingTolerance) or 8.0)
+    local PositionValid = Distance <= (tonumber(Parking.PositionTolerance) or 1.25)
+    local Stopped = GetEntitySpeed(Exam.Vehicle) <= (tonumber(Parking.StoppedSpeedMps) or 0.15)
+    local ReverseValid = Parking.RequireReverse ~= true or Exam.UsedReverse == true
+    local Valid = PositionValid and HeadingValid and Stopped and ReverseValid
+
+    if not ReverseValid then
+        Exam.ParkingHoldStartedAt = nil
+        parkingFeedback(Exam,"reverse","Realize a manobra utilizando a marcha re.")
+    elseif not PositionValid then
+        Exam.ParkingHoldStartedAt = nil
+        parkingFeedback(Exam,"position","Posicione o veiculo dentro da vaga indicada.")
+    elseif not HeadingValid then
+        Exam.ParkingHoldStartedAt = nil
+        parkingFeedback(Exam,"heading","Ajuste o alinhamento do veiculo.")
+    elseif not Stopped then
+        Exam.ParkingHoldStartedAt = nil
+        parkingFeedback(Exam,"moving","Pare o veiculo dentro da vaga.")
+    elseif Valid then
+        if not Exam.ParkingHoldStartedAt then
+            Exam.ParkingHoldStartedAt = Now
+            parkingFeedback(Exam,"hold","Mantenha o veiculo parado e alinhado.")
+            debugLog("parking_position_valid")
+        elseif Now - Exam.ParkingHoldStartedAt >= (tonumber(Parking.HoldMs) or 3000) then
+            completeParking(Exam)
+        end
+    end
+end
+
 local function startExam()
     if StartBusy then
         return
@@ -663,6 +1013,10 @@ local function advanceChecklist(Step)
     Exam.State = Result.state
     Exam.WrongSeatNotified = false
     showChecklistHud(Exam.State)
+    if Exam.State == "READY_FOR_ROUTE" then
+        Exam.NextRouteStartAt = GetGameTimer() + (tonumber(Config.Exam.Route.StartDelayMs) or 1200)
+        notify("Percurso liberado. Siga a rota indicada.","verde",6000)
+    end
 end
 
 RegisterCommand("ofcnhdiag",function()
@@ -682,6 +1036,58 @@ RegisterCommand("ofcnhdiag",function()
         boolText(State.HighBeamsOn),
         State.SpeedKmh
     ))
+end,false)
+
+-- TEMPORARY development-only helper. It records local coordinates in memory
+-- and never calls the server, mutates an exam session or persists data.
+RegisterCommand("ofcnhroutepoint",function()
+    if Config.DebugRouteRecorder ~= true then
+        print("[of_drivingschool] ROUTE_RECORDER disabled")
+        return
+    end
+
+    local Ped = PlayerPedId()
+    local Vehicle = GetVehiclePedIsIn(Ped,false)
+    local Entity = Vehicle ~= 0 and Vehicle or Ped
+    local Coords = GetEntityCoords(Entity)
+    local Heading = GetEntityHeading(Entity)
+    RecordedRoutePoints[#RecordedRoutePoints + 1] = {
+        x = Coords.x,
+        y = Coords.y,
+        z = Coords.z,
+        heading = Heading
+    }
+    print(("[of_drivingschool] ROUTE_POINT vec3(%.4f,%.4f,%.4f) heading=%.2f"):format(Coords.x,Coords.y,Coords.z,Heading))
+end,false)
+
+RegisterCommand("ofcnhroutepoints",function()
+    if Config.DebugRouteRecorder ~= true then
+        print("[of_drivingschool] ROUTE_RECORDER disabled")
+        return
+    end
+
+    print(("[of_drivingschool] ROUTE_POINTS_BEGIN count=%s"):format(#RecordedRoutePoints))
+    local Radius = tonumber(Config.Exam.Route.DefaultRadius) or 6.0
+    for Index,Point in ipairs(RecordedRoutePoints) do
+        print(("    { Coords = vec3(%.4f,%.4f,%.4f), Radius = %.1f, Label = \"Ponto %s\" },"):format(
+            Point.x,
+            Point.y,
+            Point.z,
+            Radius,
+            Index
+        ))
+    end
+    print("[of_drivingschool] ROUTE_POINTS_END")
+end,false)
+
+RegisterCommand("ofcnhrouteclear",function()
+    if Config.DebugRouteRecorder ~= true then
+        print("[of_drivingschool] ROUTE_RECORDER disabled")
+        return
+    end
+
+    RecordedRoutePoints = {}
+    print("[of_drivingschool] ROUTE_POINTS_CLEARED")
 end,false)
 
 RegisterCommand("ofcnhcancelar",function()
@@ -723,6 +1129,17 @@ RegisterNetEvent("of_drivingschool:ShowFailed",function(Reason,Category)
     showResult("failed",Reason or "A prova pratica nao foi concluida.",Category)
 end)
 
+RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,Category)
+    local Exam = ActiveExam
+    if not Exam or tostring(Token or "") ~= Exam.Token then
+        return
+    end
+
+    cleanupExam(true)
+    showResult(Approved == true and "approved" or "failed",Reason,Category)
+    debugLog(Approved == true and "exam_passed" or "exam_failed")
+end)
+
 CreateThread(function()
     while not ResourceStopping do
         if GetResourceState("target") == "started" then
@@ -745,7 +1162,7 @@ CreateThread(function()
 
             if LocalPlayer.state.Death or IsPedDeadOrDying(Ped,true) or GetEntityHealth(Ped) <= 100 then
                 cancelActiveExam("death","A prova pratica foi encerrada.")
-            elseif not examVehicleMatches(Vehicle,Exam) then
+            elseif not examVehicleMatches(Vehicle,Exam) or IsEntityDead(Vehicle) or GetEntityHealth(Vehicle) <= 0 then
                 cancelActiveExam("vehicle_missing","O veiculo da prova nao esta mais disponivel.")
             else
                 local Now = GetGameTimer()
@@ -759,7 +1176,7 @@ CreateThread(function()
 
                 if Exam.State == "WAITING_FOR_DRIVER" and CorrectSeat then
                     advanceChecklist("ENTER_DRIVER_SEAT")
-                elseif Exam.State ~= "WAITING_FOR_DRIVER" and Exam.State ~= "READY_FOR_ROUTE" and not CorrectSeat then
+                elseif Exam.State ~= "WAITING_FOR_DRIVER" and not CorrectSeat then
                     if not Exam.WrongSeatNotified then
                         Exam.WrongSeatNotified = true
                         notify("Retorne ao banco do motorista do veiculo da Autoescola.","amarelo")
@@ -776,7 +1193,70 @@ CreateThread(function()
                         advanceChecklist("ENGINE")
                     elseif Exam.State == "WAITING_FOR_LIGHTS" and State.LightsOn then
                         advanceChecklist("LIGHTS")
+                    elseif Exam.State == "READY_FOR_ROUTE" and not Exam.RouteUnavailable and GetGameTimer() >= (Exam.NextRouteStartAt or 0) then
+                        beginRoute()
+                    elseif Exam.State == "ROUTE_ACTIVE" then
+                        processRoute(Exam,State)
+                    elseif Exam.State == "ROUTE_COMPLETE" then
+                        beginParking()
+                    elseif Exam.State == "PARKING_ACTIVE" then
+                        processParking(Exam,State)
                     end
+                end
+            end
+        end
+
+        Wait(WaitTime)
+    end
+end)
+
+CreateThread(function()
+    while true do
+        local WaitTime = 500
+        local Exam = ActiveExam
+        local Ped = PlayerPedId()
+        local PedCoords = GetEntityCoords(Ped)
+
+        if Exam and Exam.State == "ROUTE_ACTIVE" then
+            local Point = routeCheckpoints()[tonumber(Exam.RouteIndex) or 0]
+            local Marker = Config.Exam.Route.Marker
+            if Point and Point.Coords and #(PedCoords - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z)) <= (tonumber(Marker.DrawDistance) or 80.0) then
+                WaitTime = 0
+                local Radius = checkpointRadius(Point)
+                DrawMarker(
+                    tonumber(Marker.Type) or 1,
+                    Point.Coords.x,Point.Coords.y,Point.Coords.z - 1.05,
+                    0.0,0.0,0.0,0.0,0.0,0.0,
+                    Radius * 1.25,Radius * 1.25,tonumber(Marker.Height) or 1.0,
+                    tonumber(Marker.Red) or 216,tonumber(Marker.Green) or 173,tonumber(Marker.Blue) or 85,tonumber(Marker.Alpha) or 150,
+                    false,false,2,false
+                )
+            end
+        elseif Exam and Exam.State == "PARKING_ACTIVE" then
+            local Parking = Config.Exam.Parking
+            local Marker = Parking.Marker
+            local Center = Parking.Center
+            if #(PedCoords - vector3(Center.x,Center.y,Center.z)) <= (tonumber(Marker.DrawDistance) or 80.0) then
+                WaitTime = 0
+                local Tolerance = tonumber(Parking.PositionTolerance) or 1.25
+                DrawMarker(
+                    tonumber(Marker.Type) or 1,
+                    Center.x,Center.y,Center.z - 1.05,
+                    0.0,0.0,0.0,0.0,0.0,0.0,
+                    Tolerance * 2.0,Tolerance * 2.0,tonumber(Marker.CenterHeight) or 0.35,
+                    tonumber(Marker.Red) or 216,tonumber(Marker.Green) or 173,tonumber(Marker.Blue) or 85,tonumber(Marker.Alpha) or 150,
+                    false,false,2,false
+                )
+
+                for _,Reference in ipairs({ Parking.FrontReference,Parking.RearReference }) do
+                    DrawMarker(
+                        tonumber(Marker.Type) or 1,
+                        Reference.x,Reference.y,Reference.z - 1.05,
+                        0.0,0.0,0.0,0.0,0.0,0.0,
+                        tonumber(Marker.ReferenceRadius) or 0.45,tonumber(Marker.ReferenceRadius) or 0.45,tonumber(Marker.ReferenceHeight) or 1.25,
+                        tonumber(Marker.Red) or 216,tonumber(Marker.Green) or 173,tonumber(Marker.Blue) or 85,tonumber(Marker.Alpha) or 150,
+                        false,false,2,false
+                    )
                 end
             end
         end
