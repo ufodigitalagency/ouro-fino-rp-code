@@ -151,6 +151,10 @@ local function clearPracticalState(Exam)
     Exam.LastParkingFeedback = nil
     Exam.LastParkingFeedbackAt = nil
     Exam.LastSeatbeltWarningAt = nil
+    Exam.GuidanceOverride = nil
+    Exam.AntiAbuseOffRoute = false
+    Exam.StopHoldMs = nil
+    Exam.StopHoldTargetMs = nil
 end
 
 local function loadModel(ModelName,TimeoutMs)
@@ -422,6 +426,59 @@ local function hideChecklistHud()
     SendNUIMessage({ Action = "hideChecklist" })
 end
 
+local function hideGuidanceHud()
+    SendNUIMessage({ Action = "hideGuidance" })
+end
+
+local function showGuidanceHud(Exam,Title,Instruction,Severity,HoldMs,HoldTargetMs,Detail)
+    if not Exam then
+        hideGuidanceHud()
+        return
+    end
+
+    SendNUIMessage({
+        Action = "showGuidance",
+        Title = tostring(Title or "AUTOESCOLA"),
+        Instruction = tostring(Instruction or ""),
+        Detail = tostring(Detail or ""),
+        Severity = tostring(Severity or "normal"),
+        RouteIndex = tonumber(Exam.RouteIndex) or 0,
+        RouteTotal = #routeCheckpoints(),
+        RemainingPoints = tonumber(Exam.RemainingPoints) or tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
+        MaximumPoints = tonumber(Exam.MaximumPoints) or tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
+        HoldMs = tonumber(HoldMs) or 0,
+        HoldTargetMs = tonumber(HoldTargetMs) or 0,
+        TestMode = Exam.TestMode == true
+    })
+end
+
+local function setGuidanceOverride(Exam,Title,Instruction,Severity,DurationMs,Detail)
+    if not Exam then
+        return
+    end
+
+    Exam.GuidanceOverride = {
+        Title = Title,
+        Instruction = Instruction,
+        Severity = Severity,
+        Detail = Detail,
+        ExpiresAt = GetGameTimer() + math.max(0,tonumber(DurationMs) or 0)
+    }
+    showGuidanceHud(Exam,Title,Instruction,Severity,nil,nil,Detail)
+end
+
+local function activeGuidanceOverride(Exam)
+    local Override = Exam and Exam.GuidanceOverride
+    if Override and GetGameTimer() < (tonumber(Override.ExpiresAt) or 0) then
+        return Override
+    end
+
+    if Exam then
+        Exam.GuidanceOverride = nil
+    end
+    return nil
+end
+
 local function showChecklistHud(State)
     State = tostring(State or "")
     if not Config.Checklist[State] then
@@ -440,6 +497,7 @@ local function showResult(Result,Reason,Category)
     ResultGeneration = ResultGeneration + 1
     local Generation = ResultGeneration
     hideChecklistHud()
+    hideGuidanceHud()
 
     SendNUIMessage({
         Action = "showResult",
@@ -494,6 +552,7 @@ local function cleanupExam(DeleteVehicle)
     local Exam = ActiveExam
     ActiveExam = nil
     hideChecklistHud()
+    hideGuidanceHud()
     clearPracticalState(Exam)
 
     if DeleteVehicle ~= false then
@@ -730,9 +789,11 @@ local function beginRoute()
 
     Exam.State = "ROUTE_ACTIVE"
     Exam.RouteIndex = tonumber(Result.routeIndex) or 1
+    Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
+    Exam.TestMode = Result.testMode == true or Exam.TestMode == true
     hideChecklistHud()
     setRouteDestination(Exam,Exam.RouteIndex)
-    notify("Percurso iniciado. Siga a rota indicada.","verde",6000)
+    showGuidanceHud(Exam,"PERCURSO","Siga a rota indicada.","normal")
     debugLog(("route_started index=%s total=%s"):format(Exam.RouteIndex,tostring(Result.total)))
 end
 
@@ -757,15 +818,24 @@ local function reachRouteCheckpoint()
 
     Exam.RouteAdvancing = false
     if not Result or not Result.success then
+        if Result and Result.code == "stop_pending" then
+            Exam.StopHoldMs = tonumber(Result.holdMs) or 0
+            Exam.StopHoldTargetMs = tonumber(Result.holdTargetMs) or tonumber(Config.Exam.Route.Stop and Config.Exam.Route.Stop.HoldMs) or 2000
+            Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
+            return
+        end
         handlePracticalFailure(Exam,Result)
         return
     end
 
+    Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
+    Exam.StopHoldMs = nil
+    Exam.StopHoldTargetMs = nil
     debugLog(("checkpoint_reached index=%s total=%s"):format(Index,tostring(Result.total)))
     if Result.state == "ROUTE_COMPLETE" then
         Exam.State = "ROUTE_COMPLETE"
         clearExamDestination(Exam)
-        notify("Percurso concluido. Siga ate a area de baliza.","verde",7000)
+        showGuidanceHud(Exam,"PERCURSO CONCLUÍDO","Dirija até a área de baliza.","success")
         debugLog("route_completed")
         beginParking()
         return
@@ -774,7 +844,11 @@ local function reachRouteCheckpoint()
     Exam.State = "ROUTE_ACTIVE"
     Exam.RouteIndex = tonumber(Result.routeIndex) or (Index + 1)
     setRouteDestination(Exam,Exam.RouteIndex)
-    notify(("Percurso %s/%s"):format(tostring(Result.completed or Index),tostring(Result.total or #routeCheckpoints())),"verde",3000)
+    if Result.stopSatisfied then
+        setGuidanceOverride(Exam,"PARADA REALIZADA","Continue o percurso.","success",2500)
+    elseif not activeGuidanceOverride(Exam) then
+        showGuidanceHud(Exam,"PERCURSO","Siga até o próximo ponto.","normal")
+    end
 end
 
 beginParking = function()
@@ -803,21 +877,22 @@ beginParking = function()
     Exam.State = "PARKING_ACTIVE"
     Exam.ParkingStartedAt = GetGameTimer()
     Exam.ParkingHoldStartedAt = nil
+    Exam.AntiAbuseOffRoute = false
     Exam.UsedReverse = Result.usedReverse == true
+    Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
+    Exam.TestMode = Result.testMode == true or Exam.TestMode == true
     Exam.ReversePending = false
     Exam.PassRequestPending = false
     setParkingDestination(Exam)
-    notify("Baliza: use a marcha re e posicione o veiculo na vaga.","amarelo",7000)
+    showGuidanceHud(Exam,"BALIZA","Use a marcha ré e entre na vaga.","normal")
     debugLog("parking_started")
 end
 
-local function parkingFeedback(Exam,Key,Message)
-    local Now = GetGameTimer()
-    local Throttle = tonumber(Config.Exam.Parking.FeedbackThrottleMs) or 4000
-    if Exam.LastParkingFeedback ~= Key or Now >= (Exam.LastParkingFeedbackAt or 0) + Throttle then
-        Exam.LastParkingFeedback = Key
-        Exam.LastParkingFeedbackAt = Now
-        notify(Message,"amarelo",3500)
+local function parkingFeedback(Exam,Key,Message,HoldMs,HoldTargetMs)
+    Exam.LastParkingFeedback = Key
+    Exam.LastParkingFeedbackAt = GetGameTimer()
+    if not Exam.AntiAbuseOffRoute then
+        showGuidanceHud(Exam,"BALIZA",Message,"normal",HoldMs,HoldTargetMs)
     end
 end
 
@@ -872,11 +947,7 @@ end
 
 local function processRoute(Exam,State)
     if State.Seatbelt ~= true then
-        local Now = GetGameTimer()
-        if Now >= (Exam.LastSeatbeltWarningAt or 0) then
-            Exam.LastSeatbeltWarningAt = Now + 5000
-            notify("Coloque o cinto para continuar a prova.","amarelo",4500)
-        end
+        showGuidanceHud(Exam,"CINTO OBRIGATÓRIO","Coloque o cinto para continuar a prova.","warning")
         return
     end
 
@@ -887,8 +958,35 @@ local function processRoute(Exam,State)
         return
     end
 
-    if #(GetEntityCoords(Exam.Vehicle) - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z)) <= checkpointRadius(Point) then
+    if Exam.AntiAbuseOffRoute then
+        showGuidanceHud(Exam,"FORA DO PERCURSO","Retorne à rota da Autoescola.","danger")
+        return
+    end
+
+    local Override = activeGuidanceOverride(Exam)
+    if Override then
+        showGuidanceHud(Exam,Override.Title,Override.Instruction,Override.Severity,nil,nil,Override.Detail)
+    end
+
+    local Distance = #(GetEntityCoords(Exam.Vehicle) - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z))
+    if Point.StopRequired == true then
+        local Stop = Config.Exam.Route.Stop or {}
+        local WarningDistance = math.max(checkpointRadius(Point),tonumber(Stop.WarningDistance) or 18.0)
+        if Distance <= WarningDistance then
+            if not Override then
+                local HeldMs = tonumber(Exam.StopHoldMs) or 0
+                local TargetMs = tonumber(Exam.StopHoldTargetMs) or tonumber(Stop.HoldMs) or 2000
+                local Instruction = HeldMs > 0 and "Mantenha o veículo parado." or "Reduza a velocidade e pare completamente o veículo."
+                showGuidanceHud(Exam,"PARE",Instruction,"danger",HeldMs,TargetMs)
+            end
+            reachRouteCheckpoint()
+        elseif not Override then
+            showGuidanceHud(Exam,"PERCURSO","Siga até o próximo ponto.","normal")
+        end
+    elseif Distance <= checkpointRadius(Point) then
         reachRouteCheckpoint()
+    elseif not Override then
+        showGuidanceHud(Exam,"PERCURSO","Siga até o próximo ponto.","normal")
     end
 end
 
@@ -897,10 +995,7 @@ local function processParking(Exam,State)
     local Now = GetGameTimer()
     if State.Seatbelt ~= true then
         Exam.ParkingHoldStartedAt = nil
-        if Now >= (Exam.LastSeatbeltWarningAt or 0) then
-            Exam.LastSeatbeltWarningAt = Now + 5000
-            notify("Coloque o cinto para continuar a prova.","amarelo",4500)
-        end
+        showGuidanceHud(Exam,"CINTO OBRIGATÓRIO","Coloque o cinto para continuar a prova.","warning")
         return
     end
 
@@ -921,22 +1016,26 @@ local function processParking(Exam,State)
 
     if not ReverseValid then
         Exam.ParkingHoldStartedAt = nil
-        parkingFeedback(Exam,"reverse","Realize a manobra utilizando a marcha re.")
+        parkingFeedback(Exam,"reverse","Use a marcha ré e entre na vaga.")
     elseif not PositionValid then
         Exam.ParkingHoldStartedAt = nil
-        parkingFeedback(Exam,"position","Posicione o veiculo dentro da vaga indicada.")
+        parkingFeedback(Exam,"position","Posicione o veículo dentro da vaga.")
     elseif not HeadingValid then
         Exam.ParkingHoldStartedAt = nil
-        parkingFeedback(Exam,"heading","Ajuste o alinhamento do veiculo.")
+        parkingFeedback(Exam,"heading","Ajuste o alinhamento do veículo.")
     elseif not Stopped then
         Exam.ParkingHoldStartedAt = nil
-        parkingFeedback(Exam,"moving","Pare o veiculo dentro da vaga.")
+        parkingFeedback(Exam,"moving","Pare o veículo.")
     elseif Valid then
         if not Exam.ParkingHoldStartedAt then
             Exam.ParkingHoldStartedAt = Now
-            parkingFeedback(Exam,"hold","Mantenha o veiculo parado e alinhado.")
             debugLog("parking_position_valid")
-        elseif Now - Exam.ParkingHoldStartedAt >= (tonumber(Parking.HoldMs) or 3000) then
+        end
+
+        local HeldMs = math.max(0,Now - Exam.ParkingHoldStartedAt)
+        local HoldMs = tonumber(Parking.HoldMs) or 3000
+        parkingFeedback(Exam,"hold","Mantenha o veículo parado e alinhado.",HeldMs,HoldMs)
+        if HeldMs >= HoldMs then
             completeParking(Exam)
         end
     end
@@ -971,7 +1070,10 @@ local function startExam()
         Advancing = false,
         VehicleRegistered = false,
         LastLimiterAt = 0,
-        WrongSeatNotified = false
+        WrongSeatNotified = false,
+        RemainingPoints = tonumber(Result.remainingPoints) or tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
+        MaximumPoints = tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
+        TestMode = Result.testMode == true
     }
 
     if ActiveExam.Token == "" or not ActiveExam.Slot then
@@ -1014,7 +1116,6 @@ local function advanceChecklist(Step)
     showChecklistHud(Exam.State)
     if Exam.State == "READY_FOR_ROUTE" then
         Exam.NextRouteStartAt = GetGameTimer() + (tonumber(Config.Exam.Route.StartDelayMs) or 1200)
-        notify("Percurso liberado. Siga a rota indicada.","verde",6000)
     end
 end
 
@@ -1047,6 +1148,37 @@ RegisterCommand("ofcnhcancelar",function()
 end,false)
 
 AddEventHandler("of_drivingschool:StartExam",startExam)
+
+RegisterNetEvent("of_drivingschool:ScoreUpdated",function(Token,RemainingPoints,MaximumPoints,Amount,Reason)
+    local Exam = ActiveExam
+    if not Exam or tostring(Token or "") ~= Exam.Token then
+        return
+    end
+
+    Exam.RemainingPoints = math.max(0,tonumber(RemainingPoints) or Exam.RemainingPoints or 0)
+    Exam.MaximumPoints = math.max(1,tonumber(MaximumPoints) or Exam.MaximumPoints or 3)
+    local Penalty = math.max(0,tonumber(Amount) or 0)
+    setGuidanceOverride(
+        Exam,
+        "INFRAÇÃO",
+        tostring(Reason or "Parada obrigatória não respeitada."),
+        "danger",
+        3500,
+        ("-%s PONTO • Restam %s pontos."):format(Penalty,Exam.RemainingPoints)
+    )
+end)
+
+RegisterNetEvent("of_drivingschool:AntiAbuseWarning",function(Token,OutsideRoute)
+    local Exam = ActiveExam
+    if not Exam or tostring(Token or "") ~= Exam.Token then
+        return
+    end
+
+    Exam.AntiAbuseOffRoute = OutsideRoute == true
+    if Exam.AntiAbuseOffRoute then
+        showGuidanceHud(Exam,"FORA DO PERCURSO","Retorne à rota da Autoescola.","danger")
+    end
+end)
 
 RegisterNetEvent("of_drivingschool:ForceCleanup",function(Token,_,Message)
     if not ActiveExam or tostring(Token or "") ~= ActiveExam.Token then
@@ -1124,7 +1256,9 @@ CreateThread(function()
                 if Exam.State == "WAITING_FOR_DRIVER" and CorrectSeat then
                     advanceChecklist("ENTER_DRIVER_SEAT")
                 elseif Exam.State ~= "WAITING_FOR_DRIVER" and not CorrectSeat then
-                    if not Exam.WrongSeatNotified then
+                    if Exam.State == "ROUTE_ACTIVE" or Exam.State == "PARKING_ACTIVE" then
+                        showGuidanceHud(Exam,"BANCO DO MOTORISTA","Retorne ao banco do motorista para continuar a prova.","warning")
+                    elseif not Exam.WrongSeatNotified then
                         Exam.WrongSeatNotified = true
                         notify("Retorne ao banco do motorista do veiculo da Autoescola.","amarelo")
                     end
@@ -1234,6 +1368,7 @@ AddEventHandler("onResourceStop",function(ResourceName)
     ResourceStopping = true
     hideResult()
     hideChecklistHud()
+    hideGuidanceHud()
     removeInstructorTarget()
     cleanupExam(true)
     InstructorSetupInProgress = {}

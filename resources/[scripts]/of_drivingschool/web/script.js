@@ -11,6 +11,14 @@
     const checklistInstruction = document.querySelector(".checklist__instruction");
     const checklistProgress = document.querySelector(".checklist__progress");
     const checklistSteps = Array.from(document.querySelectorAll(".checklist__step"));
+    const guidancePanel = document.querySelector(".guidance");
+    const guidanceTitle = document.querySelector(".guidance__title");
+    const guidanceInstruction = document.querySelector(".guidance__instruction");
+    const guidanceDetail = document.querySelector(".guidance__detail");
+    const guidanceHold = document.querySelector(".guidance__hold");
+    const guidanceRoute = document.querySelector(".guidance__route span");
+    const guidancePoints = document.querySelector(".guidance__points");
+    const guidanceTest = document.querySelector(".guidance__test");
 
     const stepCopy = [
         { pending: "Entrar no veículo", complete: "Entrou no veículo" },
@@ -31,7 +39,7 @@
     let checklistGeneration = 0;
 
     const syncBodyVisibility = () => {
-        body.classList.toggle("is-visible", body.classList.contains("has-result") || body.classList.contains("has-checklist"));
+        body.classList.toggle("is-visible", body.classList.contains("has-result") || body.classList.contains("has-checklist") || body.classList.contains("has-guidance"));
     };
 
     const hideResult = () => {
@@ -49,6 +57,76 @@
         syncBodyVisibility();
     };
 
+    const hideGuidance = () => {
+        body.classList.remove("has-guidance");
+        guidancePanel.classList.remove("is-warning", "is-danger", "is-success");
+        guidancePanel.setAttribute("aria-hidden", "true");
+        guidanceHold.hidden = true;
+        guidanceDetail.hidden = true;
+        syncBodyVisibility();
+    };
+
+    const renderPoints = (remaining, maximum) => {
+        guidancePoints.replaceChildren();
+        guidancePoints.append("Pontos ");
+        for (let index = 0; index < maximum; index += 1) {
+            const point = document.createElement("span");
+            point.classList.toggle("is-active", index < remaining);
+            point.textContent = "●";
+            point.setAttribute("aria-hidden", "true");
+            guidancePoints.append(point);
+            if (index < maximum - 1) {
+                guidancePoints.append(" ");
+            }
+        }
+        guidancePoints.title = `${remaining} de ${maximum} pontos restantes`;
+    };
+
+    const showGuidance = (payload) => {
+        if (!payload || typeof payload.Title !== "string") {
+            hideGuidance();
+            return;
+        }
+
+        hideChecklist();
+        hideResult();
+        const severity = ["warning", "danger", "success"].includes(payload.Severity) ? payload.Severity : "normal";
+        const routeIndex = Math.max(0, Number(payload.RouteIndex) || 0);
+        const routeTotal = Math.max(0, Number(payload.RouteTotal) || 0);
+        const maximumPoints = Math.max(1, Math.floor(Number(payload.MaximumPoints) || 3));
+        const remainingPoints = Math.min(maximumPoints, Math.max(0, Math.floor(Number(payload.RemainingPoints) || 0)));
+        const holdTargetMs = Math.max(0, Number(payload.HoldTargetMs) || 0);
+        const holdMs = Math.min(holdTargetMs, Math.max(0, Number(payload.HoldMs) || 0));
+        let detail = String(payload.Detail || "");
+
+        guidancePanel.classList.toggle("is-warning", severity === "warning");
+        guidancePanel.classList.toggle("is-danger", severity === "danger");
+        guidancePanel.classList.toggle("is-success", severity === "success");
+        guidanceTitle.textContent = payload.Title;
+        guidanceInstruction.textContent = String(payload.Instruction || "");
+        guidanceRoute.textContent = `${routeIndex} / ${routeTotal}`;
+        guidanceTest.hidden = payload.TestMode !== true;
+        renderPoints(remainingPoints, maximumPoints);
+
+        if (holdTargetMs > 0) {
+            guidanceHold.max = holdTargetMs;
+            guidanceHold.value = holdMs;
+            guidanceHold.textContent = `${holdMs} de ${holdTargetMs}`;
+            guidanceHold.hidden = false;
+            if (!detail && holdMs > 0) {
+                detail = `${(holdMs / 1000).toFixed(1)} / ${(holdTargetMs / 1000).toFixed(1)} s`;
+            }
+        } else {
+            guidanceHold.hidden = true;
+        }
+
+        guidanceDetail.textContent = detail;
+        guidanceDetail.hidden = detail === "";
+        body.classList.add("has-guidance");
+        guidancePanel.setAttribute("aria-hidden", "false");
+        syncBodyVisibility();
+    };
+
     const showResult = (payload) => {
         if (!payload || (payload.Result !== "approved" && payload.Result !== "failed")) {
             hideResult();
@@ -56,6 +134,7 @@
         }
 
         hideChecklist();
+        hideGuidance();
         const approved = payload.Result === "approved";
         resultTitle.textContent = approved ? "APROVADO" : "REPROVADO";
         resultReason.textContent = String(payload.Reason || (approved
@@ -77,6 +156,7 @@
         }
 
         hideResult();
+        hideGuidance();
         checklistGeneration += 1;
         const generation = checklistGeneration;
         const previousCompleted = checklistCompleted;
@@ -122,6 +202,7 @@
 
     const hideAll = () => {
         hideChecklist();
+        hideGuidance();
         hideResult();
     };
 
@@ -139,6 +220,10 @@
             showChecklist(payload);
         } else if (payload.Action === "hideChecklist") {
             hideChecklist();
+        } else if (payload.Action === "showGuidance") {
+            showGuidance(payload);
+        } else if (payload.Action === "hideGuidance") {
+            hideGuidance();
         }
     });
 

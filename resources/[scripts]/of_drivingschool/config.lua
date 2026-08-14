@@ -48,6 +48,9 @@ Config.Exam = {
     Category = "B",
     VehicleModel = "sentinel3",
     MaxSpeedKmh = 50.0,
+    Scoring = {
+        StartingPoints = 3
+    },
     StartServerDistance = 4.0,
     VehicleRegistrationDistance = 2.0,
     SpawnOccupancyRadius = 2.5,
@@ -67,6 +70,14 @@ Config.Exam = {
     Route = {
         StartDelayMs = 1200,
         DefaultRadius = 6.0,
+        Stop = {
+            WarningDistance = 18.0,
+            HoldRadius = 4.5,
+            HoldMs = 2000,
+            SpeedMps = 0.15,
+            Penalty = 1,
+            PassProjectionMeters = 0.5
+        },
         Blip = {
             Sprite = 1,
             Color = 5,
@@ -86,28 +97,50 @@ Config.Exam = {
             { Coords = vec3(-2299.2698,475.8217,173.7578), Radius = 6.0, Label = "Ponto 1" },
             { Coords = vec3(-2145.7812,399.8969,135.5422), Radius = 6.0, Label = "Ponto 2" },
             { Coords = vec3(-2003.0409,131.8377,100.9889), Radius = 6.0, Label = "Ponto 3" },
-            { Coords = vec3(-1808.2689,72.3628,71.0404), Radius = 6.0, Label = "Ponto 4" },
+            { Coords = vec3(-1808.2689,72.3628,71.0404), Radius = 6.0, Label = "Ponto 4", StopRequired = true },
             { Coords = vec3(-1779.0399,64.7816,68.3278), Radius = 6.0, Label = "Ponto 5" },
             { Coords = vec3(-1757.7206,65.0573,67.6389), Radius = 6.0, Label = "Ponto 6" },
-            { Coords = vec3(-1678.9906,111.1456,63.3248), Radius = 6.0, Label = "Ponto 7" },
-            { Coords = vec3(-1500.5083,214.5021,58.8857), Radius = 6.0, Label = "Ponto 8" },
-            { Coords = vec3(-1517.9240,235.4915,60.4641), Radius = 6.0, Label = "Ponto 9" },
-            { Coords = vec3(-1595.3376,292.6775,57.5272), Radius = 6.0, Label = "Ponto 10" },
-            { Coords = vec3(-1750.4303,249.5412,65.4708), Radius = 6.0, Label = "Ponto 11" },
-            { Coords = vec3(-1827.5443,147.0405,77.0835), Radius = 6.0, Label = "Ponto 12" },
-            { Coords = vec3(-1835.5773,123.8974,76.7221), Radius = 6.0, Label = "Ponto 13" },
-            { Coords = vec3(-1833.5927,98.9690,74.4916), Radius = 6.0, Label = "Ponto 14" },
-            { Coords = vec3(-1816.2979,74.9599,71.5511), Radius = 6.0, Label = "Ponto 15" },
-            { Coords = vec3(-1848.5021,86.1217,78.0002), Radius = 6.0, Label = "Ponto 16" },
-            { Coords = vec3(-2033.6007,181.0393,111.7222), Radius = 6.0, Label = "Ponto 17" },
-            { Coords = vec3(-2138.8445,401.0434,135.4923), Radius = 6.0, Label = "Ponto 18" },
-            { Coords = vec3(-2207.4355,568.2988,162.6942), Radius = 6.0, Label = "Ponto 19" },
-            { Coords = vec3(-2310.8662,416.3783,173.9017), Radius = 6.0, Label = "Ponto 20" },
-            { Coords = vec3(-2320.2808,394.1084,173.9017), Radius = 6.0, Label = "Ponto 21" },
+            { Coords = vec3(-1595.3376,292.6775,57.5272), Radius = 6.0, Label = "Ponto 7" },
+            { Coords = vec3(-1750.4303,249.5412,65.4708), Radius = 6.0, Label = "Ponto 8" },
+            { Coords = vec3(-1827.5443,147.0405,77.0835), Radius = 6.0, Label = "Ponto 9", StopRequired = true },
+            { Coords = vec3(-1848.5021,86.1217,78.0002), Radius = 6.0, Label = "Ponto 10" },
+            { Coords = vec3(-2138.8445,401.0434,135.4923), Radius = 6.0, Label = "Ponto 11" },
+            { Coords = vec3(-2310.8662,416.3783,173.9017), Radius = 6.0, Label = "Ponto 12" },
 
             -- Exact staging position immediately before reversing into the parking space.
             { Coords = vec3(-2343.3057,377.0819,173.9019), Radius = 2.5, Label = "Inicio da baliza" }
+        },
+        -- Hidden geometry from the complete captured route. Used only by the server anti-abuse corridor.
+        CorridorAnchors = {
+            { Coords = vec3(-2299.2698,475.8217,173.7578) },
+            { Coords = vec3(-2145.7812,399.8969,135.5422) },
+            { Coords = vec3(-2003.0409,131.8377,100.9889) },
+            { Coords = vec3(-1808.2689,72.3628,71.0404) },
+            { Coords = vec3(-1779.0399,64.7816,68.3278) },
+            { Coords = vec3(-1757.7206,65.0573,67.6389) },
+            { Coords = vec3(-1678.9906,111.1456,63.3248) },
+            { Coords = vec3(-1500.5083,214.5021,58.8857) },
+            { Coords = vec3(-1517.9240,235.4915,60.4641) },
+            { Coords = vec3(-1595.3376,292.6775,57.5272) },
+            { Coords = vec3(-1750.4303,249.5412,65.4708) },
+            { Coords = vec3(-1827.5443,147.0405,77.0835) },
+            { Coords = vec3(-1835.5773,123.8974,76.7221) },
+            { Coords = vec3(-1833.5927,98.9690,74.4916) },
+            { Coords = vec3(-1816.2979,74.9599,71.5511) },
+            { Coords = vec3(-1848.5021,86.1217,78.0002) },
+            { Coords = vec3(-2033.6007,181.0393,111.7222) },
+            { Coords = vec3(-2138.8445,401.0434,135.4923) },
+            { Coords = vec3(-2207.4355,568.2988,162.6942) },
+            { Coords = vec3(-2310.8662,416.3783,173.9017) },
+            { Coords = vec3(-2320.2808,394.1084,173.9017) },
+            { Coords = vec3(-2343.3057,377.0819,173.9019) }
         }
+    },
+    AntiAbuse = {
+        DriverSeatGraceMs = 15000,
+        NoProgressTimeoutMs = 180000,
+        MaxRouteDeviationMeters = 120.0,
+        OffRouteGraceMs = 10000
     },
     Parking = {
         Center = vec4(-2338.02,382.61,173.79,113.39),

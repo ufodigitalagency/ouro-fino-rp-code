@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="checklist" aria-live="polite" aria-hidden="true">
+    <aside class="checklist" aria-label="Preparação da prova" aria-live="polite" aria-hidden="true">
         <section class="checklist__card">
             <header class="checklist__header">
                 <p class="checklist__brand">AUTOESCOLA OURO FINO</p>
@@ -21,6 +21,22 @@
                 <li class="checklist__step" data-step="2"><span class="checklist__marker" aria-hidden="true">○</span><span class="checklist__label">Ligar o motor</span></li>
                 <li class="checklist__step" data-step="3"><span class="checklist__marker" aria-hidden="true">○</span><span class="checklist__label">Acender os faróis</span></li>
             </ol>
+        </section>
+    </aside>
+    <aside class="guidance" aria-label="Orientações da prova" aria-live="polite" aria-hidden="true">
+        <section class="guidance__card">
+            <header class="guidance__header">
+                <p class="guidance__brand">AUTOESCOLA OURO FINO</p>
+                <p class="guidance__test" hidden>TEST MODE</p>
+            </header>
+            <h2 class="guidance__title">PERCURSO</h2>
+            <p class="guidance__instruction"></p>
+            <p class="guidance__detail" hidden></p>
+            <progress class="guidance__hold" aria-label="Tempo de parada" max="1" value="0" hidden>0 de 1</progress>
+            <footer class="guidance__footer">
+                <p class="guidance__route">Percurso <span>1 / 13</span></p>
+                <p class="guidance__points"></p>
+            </footer>
         </section>
     </aside>
     <main class="result" aria-live="polite" aria-hidden="true">

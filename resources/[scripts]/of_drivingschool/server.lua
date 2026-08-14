@@ -13,6 +13,7 @@ local ExamSessions = {}
 local ActivePassports = {}
 local SpawnReservations = {}
 local RateLimits = {}
+local ExamTestModes = {}
 local InstructorNpc = 0
 local InstructorNetwork = 0
 local InstructorNpcCreating = false
@@ -59,6 +60,69 @@ end
 
 local function checkpointRadius(Point)
     return math.max(0.5,tonumber(Point and Point.Radius) or tonumber(Config.Exam.Route.DefaultRadius) or 6.0)
+end
+
+local function pointToSegmentDistance2D(Point,StartPoint,EndPoint)
+    local DeltaX = EndPoint.x - StartPoint.x
+    local DeltaY = EndPoint.y - StartPoint.y
+    local LengthSquared = (DeltaX * DeltaX) + (DeltaY * DeltaY)
+    if LengthSquared <= 0.0001 then
+        local OffsetX = Point.x - StartPoint.x
+        local OffsetY = Point.y - StartPoint.y
+        return math.sqrt((OffsetX * OffsetX) + (OffsetY * OffsetY))
+    end
+
+    local Projection = (((Point.x - StartPoint.x) * DeltaX) + ((Point.y - StartPoint.y) * DeltaY)) / LengthSquared
+    Projection = math.max(0.0,math.min(1.0,Projection))
+    local ClosestX = StartPoint.x + (DeltaX * Projection)
+    local ClosestY = StartPoint.y + (DeltaY * Projection)
+    local OffsetX = Point.x - ClosestX
+    local OffsetY = Point.y - ClosestY
+    return math.sqrt((OffsetX * OffsetX) + (OffsetY * OffsetY))
+end
+
+local function routeCorridorPoints()
+    local Route = Config.Exam and Config.Exam.Route
+    local Anchors = Route and Route.CorridorAnchors
+    if type(Anchors) == "table" then
+        local ValidAnchors = {}
+        for _,Anchor in ipairs(Anchors) do
+            local Coords = Anchor and Anchor.Coords
+            if Coords and tonumber(Coords.x) and tonumber(Coords.y) then
+                ValidAnchors[#ValidAnchors + 1] = Anchor
+            end
+        end
+
+        if #ValidAnchors >= 2 then
+            return ValidAnchors
+        end
+    end
+
+    return routeCheckpoints()
+end
+
+local function routeDeviationMeters(Vehicle)
+    local Points = routeCorridorPoints()
+    if Vehicle == 0 or #Points == 0 then
+        return nil
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    local Minimum = nil
+    if #Points == 1 then
+        return pointToSegmentDistance2D(Coords,Points[1].Coords,Points[1].Coords)
+    end
+
+    for Index = 1,#Points - 1 do
+        local StartPoint = Points[Index] and Points[Index].Coords
+        local EndPoint = Points[Index + 1] and Points[Index + 1].Coords
+        if StartPoint and EndPoint then
+            local Distance = pointToSegmentDistance2D(Coords,StartPoint,EndPoint)
+            Minimum = not Minimum and Distance or math.min(Minimum,Distance)
+        end
+    end
+
+    return Minimum
 end
 
 local function headingDifference(First,Second)
@@ -680,6 +744,39 @@ local function registeredExamDriver(PlayerSource,Session,Network)
     return Vehicle,Ped,nil
 end
 
+local function stopSettings()
+    local Route = Config.Exam and Config.Exam.Route
+    return Route and type(Route.Stop) == "table" and Route.Stop or {}
+end
+
+local function passedStopPoint(Vehicle,Point,NextPoint)
+    if Vehicle == 0 or not Point or not Point.Coords or not NextPoint or not NextPoint.Coords then
+        return false
+    end
+
+    local Stop = stopSettings()
+    local StartPoint = Point.Coords
+    local EndPoint = NextPoint.Coords
+    local DeltaX = EndPoint.x - StartPoint.x
+    local DeltaY = EndPoint.y - StartPoint.y
+    local Length = math.sqrt((DeltaX * DeltaX) + (DeltaY * DeltaY))
+    if Length <= 0.001 then
+        return false
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    local DirectionX = DeltaX / Length
+    local DirectionY = DeltaY / Length
+    local OffsetX = Coords.x - StartPoint.x
+    local OffsetY = Coords.y - StartPoint.y
+    local Longitudinal = (OffsetX * DirectionX) + (OffsetY * DirectionY)
+    local Lateral = math.abs((OffsetX * DirectionY) - (OffsetY * DirectionX))
+    local WarningDistance = math.max(1.0,tonumber(Stop.WarningDistance) or 18.0)
+    local PassProjection = math.max(0.0,tonumber(Stop.PassProjectionMeters) or 0.5)
+
+    return Longitudinal >= PassProjection and Longitudinal <= WarningDistance and Lateral <= WarningDistance
+end
+
 local function signedLongitudinalSpeed(Vehicle)
     local VelocitySuccess,Velocity = pcall(GetEntityVelocity,Vehicle)
     local HeadingSuccess,Heading = pcall(GetEntityHeading,Vehicle)
@@ -754,6 +851,72 @@ local function finishExamFailure(PlayerSource,Reason,Message)
         TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,Token,false,Message or "A prova pratica nao foi concluida.",Category)
     end
     return true
+end
+
+local function applyExamPenalty(PlayerSource,Session,Code,Reason,Amount)
+    if not Session or ExamSessions[PlayerSource] ~= Session then
+        return false,false
+    end
+
+    local PenaltyCode = tostring(Code or "unknown")
+    Session.AppliedPenalties = Session.AppliedPenalties or {}
+    if Session.AppliedPenalties[PenaltyCode] then
+        return false,(tonumber(Session.RemainingPoints) or 0) <= 0
+    end
+
+    local StartingPoints = math.max(1,math.floor(tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3))
+    local Penalty = math.max(0,math.floor(tonumber(Amount) or 0))
+    Session.AppliedPenalties[PenaltyCode] = true
+    Session.RemainingPoints = math.max(0,math.min(StartingPoints,(tonumber(Session.RemainingPoints) or StartingPoints) - Penalty))
+
+    debugLog(("exam_penalty source=%s passport=%s code=%s amount=%s remaining=%s reason=%s"):format(
+        PlayerSource,
+        Session.Passport,
+        PenaltyCode,
+        Penalty,
+        Session.RemainingPoints,
+        tostring(Reason or "unspecified")
+    ))
+
+    if validPlayer(PlayerSource) then
+        TriggerClientEvent("of_drivingschool:ScoreUpdated",PlayerSource,Session.Token,Session.RemainingPoints,StartingPoints,Penalty,tostring(Reason or ""))
+    end
+
+    if Session.RemainingPoints <= 0 then
+        finishExamFailure(PlayerSource,"points_exhausted","Voce perdeu todos os pontos da prova pratica.")
+        return true,true
+    end
+
+    return true,false
+end
+
+local function advanceRouteCheckpoint(PlayerSource,Session,Expected,Points,Code,Extra)
+    Session.LastActivityAt = os.time()
+    Session.LastRouteProgressAt = GetGameTimer()
+    Session.StopProgress = nil
+    debugLog(("checkpoint_reached source=%s passport=%s index=%s total=%s"):format(PlayerSource,Session.Passport,Expected,#Points))
+
+    local Data = Extra or {}
+    Data.completed = Expected
+    Data.total = #Points
+    Data.remainingPoints = Session.RemainingPoints
+    if Expected >= #Points then
+        Session.State = "ROUTE_COMPLETE"
+        Session.RouteCompletedAt = os.time()
+        Session.OffRouteSince = nil
+        if Session.OffRouteWarningSent and validPlayer(PlayerSource) then
+            TriggerClientEvent("of_drivingschool:AntiAbuseWarning",PlayerSource,Session.Token,false)
+        end
+        Session.OffRouteWarningSent = false
+        Data.state = Session.State
+        debugLog(("route_completed source=%s passport=%s"):format(PlayerSource,Session.Passport))
+        return response(true,"route_complete","Percurso concluido.",Data)
+    end
+
+    Session.RouteIndex = Expected + 1
+    Data.state = Session.State
+    Data.routeIndex = Session.RouteIndex
+    return response(true,Code or "checkpoint_reached","Ponto do percurso concluido.",Data)
 end
 
 
@@ -877,6 +1040,8 @@ function API.StartExam(RequestedCategory)
         return response(false,"unsupported_category","Nesta fase somente a prova da Categoria B esta disponivel.")
     end
 
+    local TestMode = ExamTestModes[PlayerSource] == true and isAdmin(Passport)
+
     if not isAlive(PlayerSource) then
         return response(false,"player_dead","Voce nao pode iniciar a prova neste estado.")
     end
@@ -901,7 +1066,7 @@ function API.StartExam(RequestedCategory)
         return response(false,"license_check_failed","Nao foi possivel verificar sua CNH agora.")
     end
 
-    if AlreadyLicensed then
+    if AlreadyLicensed and not TestMode then
         return response(false,"license_active","Você já possui CNH Categoria B ativa.")
     end
 
@@ -916,6 +1081,9 @@ function API.StartExam(RequestedCategory)
         RejectedSlots = {},
         VehicleNetId = nil,
         RouteIndex = 0,
+        RemainingPoints = math.max(1,math.floor(tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3)),
+        AppliedPenalties = {},
+        TestMode = TestMode,
         UsedReverse = false,
         PassConsumed = false,
         CreatedAt = os.time(),
@@ -932,12 +1100,18 @@ function API.StartExam(RequestedCategory)
         return response(false,"no_spawn_slots","Nao ha veiculos de prova disponiveis. Aguarde uma vaga.")
     end
 
+    if TestMode then
+        ExamTestModes[PlayerSource] = nil
+    end
+
     debugLog(("session_started source=%s passport=%s token=%s slot=%s"):format(PlayerSource,Passport,Token,Slot))
     return response(true,"reserved","Vaga reservada para a prova pratica.",{
         token = Token,
         slot = Slot,
         plate = Session.Plate,
-        state = Session.State
+        state = Session.State,
+        remainingPoints = Session.RemainingPoints,
+        testMode = Session.TestMode == true
     })
 end
 
@@ -1164,12 +1338,18 @@ function API.BeginRoute(Token,Network)
     Session.State = "ROUTE_ACTIVE"
     Session.RouteIndex = 1
     Session.RouteStartedAt = os.time()
+    Session.LastRouteProgressAt = GetGameTimer()
+    Session.DriverMissingSince = nil
+    Session.OffRouteSince = nil
+    Session.OffRouteWarningSent = false
     Session.LastActivityAt = os.time()
     debugLog(("route_started source=%s passport=%s total=%s"):format(PlayerSource,Session.Passport,#Points))
     return response(true,"route_started","Percurso iniciado.",{
         state = Session.State,
         routeIndex = Session.RouteIndex,
-        total = #Points
+        total = #Points,
+        remainingPoints = Session.RemainingPoints,
+        testMode = Session.TestMode == true
     })
 end
 
@@ -1206,30 +1386,76 @@ function API.ReachRouteCheckpoint(Token,Network,Index)
     end
 
     local Coords = GetEntityCoords(Vehicle)
-    if #(Coords - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z)) > checkpointRadius(Point) then
-        return response(false,"checkpoint_too_far","O veiculo ainda nao chegou ao ponto atual do percurso.")
-    end
+    local Distance = #(Coords - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z))
+    if Point.StopRequired == true then
+        local Stop = stopSettings()
+        local WarningDistance = math.max(checkpointRadius(Point),tonumber(Stop.WarningDistance) or 18.0)
+        local Passed = passedStopPoint(Vehicle,Point,Points[Expected + 1])
+        if Distance > WarningDistance and not Passed then
+            return response(false,"checkpoint_too_far","O veiculo ainda nao chegou ao ponto atual do percurso.")
+        end
 
-    Session.LastActivityAt = os.time()
-    debugLog(("checkpoint_reached source=%s passport=%s index=%s total=%s"):format(PlayerSource,Session.Passport,Expected,#Points))
-    if Expected >= #Points then
-        Session.State = "ROUTE_COMPLETE"
-        Session.RouteCompletedAt = os.time()
-        debugLog(("route_completed source=%s passport=%s"):format(PlayerSource,Session.Passport))
-        return response(true,"route_complete","Percurso concluido.",{
-            state = Session.State,
-            completed = Expected,
-            total = #Points
+        if not Session.StopProgress or Session.StopProgress.Index ~= Expected then
+            Session.StopProgress = { Index = Expected, HoldStartedAt = nil }
+        end
+
+        local Progress = Session.StopProgress
+        local HoldRadius = math.max(0.5,tonumber(Stop.HoldRadius) or 4.5)
+        local HoldMs = math.max(1,tonumber(Stop.HoldMs) or 2000)
+        local SpeedLimit = math.max(0.0,tonumber(Stop.SpeedMps) or 0.15)
+        local Now = GetGameTimer()
+        if Passed then
+            Progress.HoldStartedAt = nil
+            local Applied,Failed = applyExamPenalty(
+                PlayerSource,
+                Session,
+                ("route_stop:%s"):format(Expected),
+                "Parada obrigatória não respeitada.",
+                tonumber(Stop.Penalty) or 1
+            )
+            if Failed then
+                return response(false,"points_exhausted","Voce perdeu todos os pontos da prova pratica.",{ terminate = true })
+            end
+
+            debugLog(("route_stop_violated source=%s passport=%s index=%s penalty_applied=%s"):format(PlayerSource,Session.Passport,Expected,tostring(Applied)))
+            return advanceRouteCheckpoint(PlayerSource,Session,Expected,Points,"stop_violated",{
+                stopViolated = true,
+                penaltyApplied = Applied,
+                remainingPoints = Session.RemainingPoints
+            })
+        end
+
+        if Distance <= HoldRadius and GetEntitySpeed(Vehicle) <= SpeedLimit then
+            Progress.HoldStartedAt = Progress.HoldStartedAt or Now
+            local HeldMs = math.max(0,Now - Progress.HoldStartedAt)
+            if HeldMs >= HoldMs then
+                debugLog(("route_stop_satisfied source=%s passport=%s index=%s held_ms=%s"):format(PlayerSource,Session.Passport,Expected,HeldMs))
+                return advanceRouteCheckpoint(PlayerSource,Session,Expected,Points,"stop_satisfied",{
+                    stopSatisfied = true,
+                    holdMs = HoldMs
+                })
+            end
+
+            return response(false,"stop_pending","",{
+                holdMs = HeldMs,
+                holdTargetMs = HoldMs,
+                remainingPoints = Session.RemainingPoints
+            })
+        end
+
+        Progress.HoldStartedAt = nil
+        return response(false,"stop_pending","",{
+            holdMs = 0,
+            holdTargetMs = HoldMs,
+            remainingPoints = Session.RemainingPoints
         })
     end
 
-    Session.RouteIndex = Expected + 1
-    return response(true,"checkpoint_reached","Ponto do percurso concluido.",{
-        state = Session.State,
-        routeIndex = Session.RouteIndex,
-        completed = Expected,
-        total = #Points
-    })
+    if Distance > checkpointRadius(Point) then
+        return response(false,"checkpoint_too_far","O veiculo ainda nao chegou ao ponto atual do percurso.")
+    end
+
+    return advanceRouteCheckpoint(PlayerSource,Session,Expected,Points)
 end
 
 function API.BeginParking(Token,Network)
@@ -1262,12 +1488,17 @@ function API.BeginParking(Token,Network)
     Session.ParkingStartedAt = GetGameTimer()
     Session.ParkingExpiresAt = os.time() + math.ceil(TimeoutMs / 1000)
     Session.ParkingHoldStartedAt = nil
+    Session.DriverMissingSince = nil
+    Session.OffRouteSince = nil
+    Session.OffRouteWarningSent = false
     Session.LastActivityAt = os.time()
     debugLog(("parking_started source=%s passport=%s timeout_ms=%s"):format(PlayerSource,Session.Passport,TimeoutMs))
     return response(true,"parking_started","Prova de baliza iniciada.",{
         state = Session.State,
         timeoutMs = TimeoutMs,
-        usedReverse = false
+        usedReverse = false,
+        remainingPoints = Session.RemainingPoints,
+        testMode = Session.TestMode == true
     })
 end
 
@@ -1355,46 +1586,55 @@ function API.CompleteParking(Token,Network)
 
     Session.PassConsumed = true
     Session.State = "PARKING_COMPLETE"
-    local LicenseCheckSuccess,AlreadyLicensed = pcall(hasLicense,Session.Passport,Session.Category)
-    if not LicenseCheckSuccess then
-        Session.PassConsumed = false
-        Session.State = "PARKING_ACTIVE"
-        print(("[of_drivingschool] CRITICAL exam_license_check_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
-        return response(false,"license_check_failed","Nao foi possivel validar a CNH agora.")
-    end
-
-    local GrantSuccess,Granted = true,true
-    if not AlreadyLicensed then
-        GrantSuccess,Granted = pcall(grantLicense,Session.Passport,Session.Category)
-    end
-
-    if not GrantSuccess or not Granted then
-        if ExamSessions[PlayerSource] == Session then
+    local AlreadyLicensed = false
+    local AuditSuccess = false
+    if not Session.TestMode then
+        local LicenseCheckSuccess
+        LicenseCheckSuccess,AlreadyLicensed = pcall(hasLicense,Session.Passport,Session.Category)
+        if not LicenseCheckSuccess then
             Session.PassConsumed = false
             Session.State = "PARKING_ACTIVE"
+            print(("[of_drivingschool] CRITICAL exam_license_check_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
+            return response(false,"license_check_failed","Nao foi possivel validar a CNH agora.")
         end
-        print(("[of_drivingschool] CRITICAL exam_license_grant_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
-        return response(false,"license_grant_failed","Nao foi possivel registrar a CNH agora.")
-    end
 
-    local AuditSuccess,AuditError = pcall(writeAudit,Session.Passport,Session.Category,"exam_pass",nil,"practical_exam","Prova pratica concluida com percurso e baliza.")
-    if not AuditSuccess then
-        print(("[of_drivingschool] CRITICAL exam_audit_failed source=%s passport=%s category=%s error=%s"):format(
-            PlayerSource,
-            Session.Passport,
-            Session.Category,
-            tostring(AuditError)
-        ))
+        local GrantSuccess,Granted = true,true
+        if not AlreadyLicensed then
+            GrantSuccess,Granted = pcall(grantLicense,Session.Passport,Session.Category)
+        end
+
+        if not GrantSuccess or not Granted then
+            if ExamSessions[PlayerSource] == Session then
+                Session.PassConsumed = false
+                Session.State = "PARKING_ACTIVE"
+            end
+            print(("[of_drivingschool] CRITICAL exam_license_grant_failed source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
+            return response(false,"license_grant_failed","Nao foi possivel registrar a CNH agora.")
+        end
+
+        local AuditError
+        AuditSuccess,AuditError = pcall(writeAudit,Session.Passport,Session.Category,"exam_pass",nil,"practical_exam","Prova pratica concluida com percurso e baliza.")
+        if not AuditSuccess then
+            print(("[of_drivingschool] CRITICAL exam_audit_failed source=%s passport=%s category=%s error=%s"):format(
+                PlayerSource,
+                Session.Passport,
+                Session.Category,
+                tostring(AuditError)
+            ))
+        end
+    else
+        debugLog(("exam_test_passed_without_persistence source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
     end
 
     local ResultToken = Session.Token
     local ResultCategory = Session.Category
     Session.State = "EXAM_PASSED"
-    debugLog(("exam_passed source=%s passport=%s category=%s already_active=%s"):format(
+    debugLog(("exam_passed source=%s passport=%s category=%s already_active=%s test_mode=%s"):format(
         PlayerSource,
         Session.Passport,
         Session.Category,
-        tostring(AlreadyLicensed)
+        tostring(AlreadyLicensed),
+        tostring(Session.TestMode == true)
     ))
 
     if ExamSessions[PlayerSource] == Session then
@@ -1408,7 +1648,8 @@ function API.CompleteParking(Token,Network)
         state = "EXAM_PASSED",
         category = ResultCategory,
         auditWritten = AuditSuccess,
-        alreadyLicensed = AlreadyLicensed == true
+        alreadyLicensed = AlreadyLicensed == true,
+        testMode = Session.TestMode == true
     })
 end
 
@@ -1577,6 +1818,32 @@ RegisterCommand("cnhconsultar",function(PlayerSource,Args)
         Lines[#Lines + 1] = ("Categoria %s: %s"):format(tostring(License.Category),tostring(License.Status))
     end
     notify(PlayerSource,("Passaporte %s<br>%s"):format(TargetPassport,table.concat(Lines,"<br>")),"verde",10000)
+end,false)
+
+RegisterCommand("ofcnhteste",function(PlayerSource)
+    if PlayerSource <= 0 then
+        print("[of_drivingschool] O comando ofcnhteste deve ser usado por um Admin dentro do jogo.")
+        return
+    end
+
+    local ActorPassport = passport(PlayerSource)
+    if not ActorPassport or not isAdmin(ActorPassport) then
+        notify(PlayerSource,"Acesso negado.","vermelho")
+        return
+    end
+
+    if ExamSessions[PlayerSource] then
+        notify(PlayerSource,"Finalize ou cancele a prova atual antes de alterar o modo de teste.","amarelo",7000)
+        return
+    end
+
+    if ExamTestModes[PlayerSource] then
+        ExamTestModes[PlayerSource] = nil
+        notify(PlayerSource,"Modo de teste da proxima prova desativado.","amarelo",7000)
+    else
+        ExamTestModes[PlayerSource] = true
+        notify(PlayerSource,"Modo de teste ativado para a proxima prova. A CNH real nao sera alterada.","verde",9000)
+    end
 end,false)
 
 RegisterCommand("ofcnhcds",function(PlayerSource)
@@ -1782,6 +2049,7 @@ CreateThread(function()
         Wait(Config.Exam.ServerWatchdogMs)
 
         local Now = os.time()
+        local NowMs = GetGameTimer()
         local Terminate = {}
         for PlayerSource,Session in pairs(ExamSessions) do
             local CurrentPassport = passport(PlayerSource)
@@ -1795,11 +2063,66 @@ CreateThread(function()
                 Terminate[#Terminate + 1] = { Source = PlayerSource, Reason = "reservation_timeout", Message = "A reserva do veiculo de prova expirou." }
             elseif Session.VehicleNetId and registeredVehicle(Session) == 0 then
                 Terminate[#Terminate + 1] = { Source = PlayerSource, Reason = "vehicle_missing", Message = "O veiculo da prova nao esta mais disponivel." }
+            elseif Session.State == "ROUTE_ACTIVE" or Session.State == "PARKING_ACTIVE" then
+                local AntiAbuse = Config.Exam.AntiAbuse or {}
+                local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Session.VehicleNetId)
+                if DriverError then
+                    Session.DriverMissingSince = Session.DriverMissingSince or NowMs
+                    if NowMs - Session.DriverMissingSince >= math.max(1000,tonumber(AntiAbuse.DriverSeatGraceMs) or 15000) then
+                        Terminate[#Terminate + 1] = {
+                            Source = PlayerSource,
+                            Reason = "driver_seat_abandoned",
+                            Message = "Voce permaneceu fora do banco do motorista por tempo demais.",
+                            Failed = true
+                        }
+                    end
+                else
+                    Session.DriverMissingSince = nil
+                    if Session.State == "ROUTE_ACTIVE" then
+                        if not Session.LastRouteProgressAt or NowMs - Session.LastRouteProgressAt >= math.max(1000,tonumber(AntiAbuse.NoProgressTimeoutMs) or 180000) then
+                            Terminate[#Terminate + 1] = {
+                                Source = PlayerSource,
+                                Reason = "route_no_progress",
+                                Message = "A prova foi encerrada por falta de progresso no percurso.",
+                                Failed = true
+                            }
+                        else
+                            local Deviation = routeDeviationMeters(Vehicle)
+                            local MaximumDeviation = math.max(10.0,tonumber(AntiAbuse.MaxRouteDeviationMeters) or 120.0)
+                            if Deviation and Deviation > MaximumDeviation then
+                                Session.OffRouteSince = Session.OffRouteSince or NowMs
+                                if not Session.OffRouteWarningSent and validPlayer(PlayerSource) then
+                                    Session.OffRouteWarningSent = true
+                                    TriggerClientEvent("of_drivingschool:AntiAbuseWarning",PlayerSource,Session.Token,true)
+                                end
+
+                                if NowMs - Session.OffRouteSince >= math.max(1000,tonumber(AntiAbuse.OffRouteGraceMs) or 10000) then
+                                    Terminate[#Terminate + 1] = {
+                                        Source = PlayerSource,
+                                        Reason = "off_route",
+                                        Message = "A prova foi encerrada por afastamento prolongado do percurso.",
+                                        Failed = true
+                                    }
+                                end
+                            else
+                                Session.OffRouteSince = nil
+                                if Session.OffRouteWarningSent and validPlayer(PlayerSource) then
+                                    Session.OffRouteWarningSent = false
+                                    TriggerClientEvent("of_drivingschool:AntiAbuseWarning",PlayerSource,Session.Token,false)
+                                end
+                            end
+                        end
+                    end
+                end
             end
         end
 
         for _,Entry in ipairs(Terminate) do
-            cleanupSession(Entry.Source,Entry.Reason,true,Entry.Message)
+            if Entry.Failed then
+                finishExamFailure(Entry.Source,Entry.Reason,Entry.Message)
+            else
+                cleanupSession(Entry.Source,Entry.Reason,true,Entry.Message)
+            end
         end
     end
 end)
@@ -1807,6 +2130,7 @@ end)
 AddEventHandler("playerDropped",function()
     local PlayerSource = source
     cleanupSession(PlayerSource,"player_dropped",false)
+    ExamTestModes[PlayerSource] = nil
 
     local Prefix = tostring(PlayerSource)..":"
     for Key in pairs(RateLimits) do
@@ -1837,4 +2161,5 @@ AddEventHandler("onResourceStop",function(ResourceName)
     ActivePassports = {}
     SpawnReservations = {}
     RateLimits = {}
+    ExamTestModes = {}
 end)

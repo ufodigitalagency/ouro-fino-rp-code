@@ -62,6 +62,156 @@ body.has-checklist .checklist {
     transform: translate(-50%, 0);
 }
 
+.guidance {
+    --guidance-accent: var(--gold);
+    --guidance-accent-rgb: 216, 173, 85;
+    position: fixed;
+    top: clamp(5rem, calc(7vh + 3rem), 8rem);
+    left: 50%;
+    width: min(31rem, calc(100vw - 2rem));
+    color: var(--warm-white);
+    opacity: 0;
+    transform: translate(-50%, -0.8rem);
+    transition: opacity 160ms ease, transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+body.has-guidance .guidance {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.guidance [hidden] {
+    display: none !important;
+}
+
+.guidance.is-warning {
+    --guidance-accent: #f2b84b;
+    --guidance-accent-rgb: 242, 184, 75;
+}
+
+.guidance.is-danger {
+    --guidance-accent: #ff6673;
+    --guidance-accent-rgb: 255, 102, 115;
+}
+
+.guidance.is-success {
+    --guidance-accent: #55d995;
+    --guidance-accent-rgb: 85, 217, 149;
+}
+
+.guidance__card {
+    overflow: hidden;
+    padding: 0.95rem 1.15rem 0.85rem;
+    border: 1px solid rgba(var(--guidance-accent-rgb), 0.42);
+    border-radius: 0.9rem;
+    background:
+        linear-gradient(135deg, rgba(20, 23, 27, 0.94), rgba(8, 10, 13, 0.9)),
+        radial-gradient(circle at 12% 0%, rgba(var(--guidance-accent-rgb), 0.14), transparent 44%);
+    box-shadow:
+        0 1rem 2.6rem rgba(0, 0, 0, 0.32),
+        inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.guidance__header,
+.guidance__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.guidance__brand,
+.guidance__test,
+.guidance__route,
+.guidance__points {
+    margin: 0;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+}
+
+.guidance__brand {
+    color: var(--guidance-accent);
+}
+
+.guidance__test {
+    padding: 0.2rem 0.45rem;
+    color: #15110a;
+    border-radius: 999px;
+    background: var(--gold);
+    letter-spacing: 0.08em;
+}
+
+.guidance__title {
+    margin: 0.5rem 0 0.1rem;
+    color: var(--guidance-accent);
+    font-family: "Arial Narrow", "Segoe UI", Arial, sans-serif;
+    font-size: clamp(1.35rem, 2.5vw, 1.7rem);
+    font-style: italic;
+    font-weight: 800;
+    letter-spacing: 0.025em;
+    line-height: 1.05;
+}
+
+.guidance__instruction,
+.guidance__detail {
+    margin: 0.3rem 0 0;
+    color: rgba(246, 243, 234, 0.86);
+    font-size: 0.82rem;
+    font-weight: 650;
+    line-height: 1.35;
+}
+
+.guidance__detail {
+    color: var(--guidance-accent);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.guidance__hold {
+    display: block;
+    width: 100%;
+    height: 0.22rem;
+    margin-top: 0.65rem;
+    appearance: none;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    accent-color: var(--guidance-accent);
+}
+
+.guidance__hold::-webkit-progress-bar {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.guidance__hold::-webkit-progress-value,
+.guidance__hold::-moz-progress-bar {
+    border-radius: 999px;
+    background: var(--guidance-accent);
+}
+
+.guidance__footer {
+    margin-top: 0.7rem;
+    padding-top: 0.65rem;
+    color: rgba(246, 243, 234, 0.58);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.guidance__route span,
+.guidance__points {
+    color: var(--warm-white);
+}
+
+.guidance__points span {
+    color: rgba(246, 243, 234, 0.22);
+}
+
+.guidance__points span.is-active {
+    color: var(--guidance-accent);
+}
+
 .checklist__card {
     overflow: hidden;
     padding: 1.2rem 1.35rem 1.15rem;
@@ -305,7 +455,8 @@ body.is-failed .result__icon::before {
 }
 
 @media (max-width: 600px) {
-    .checklist {
+    .checklist,
+    .guidance {
         top: 1rem;
     }
 
@@ -335,7 +486,8 @@ body.is-failed .result__icon::before {
 
 @media (prefers-reduced-motion: reduce) {
     .result,
-    .checklist {
+    .checklist,
+    .guidance {
         transition: none;
     }
 
