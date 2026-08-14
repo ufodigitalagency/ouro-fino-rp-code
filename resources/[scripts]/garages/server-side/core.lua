@@ -159,6 +159,9 @@ local Garages = {
 
 	-- Garagem publica - estacionamento -290/-985
 	["217"] = { ["Name"] = "Garage" },
+
+	-- Garagem publica - Autoescola Ouro Fino
+	["218"] = { ["Name"] = "Garage" },
 }
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- WORKS

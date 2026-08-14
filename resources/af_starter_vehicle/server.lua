@@ -3,6 +3,7 @@ local vRP = Proxy.getInterface("vRP")
 
 local StarterVehicle = "panto"
 local Prepared = false
+local GrantLocks = {}
 
 local function prepareStarterVehicle()
     if Prepared then
@@ -37,18 +38,43 @@ local function vehicleWeight(model)
 end
 
 local function giveStarterVehicle(Passport)
-    if not Passport then
-        return
+    Passport = tonumber(Passport)
+    if not Passport or Passport <= 0 or Passport ~= math.floor(Passport) then
+        return { success = false,status = "invalid_passport",granted = false }
     end
 
-    prepareStarterVehicle()
-
-    local alreadyMarked = vRP.SingleQuery("afstarter/get",{ Passport = Passport, Vehicle = StarterVehicle })
-    if alreadyMarked then
-        return
+    local IdentitySuccess,Identity = pcall(vRP.Identity,Passport)
+    if not IdentitySuccess or not Identity then
+        return { success = false,status = IdentitySuccess and "invalid_passport" or "identity_check_failed",granted = false }
     end
 
-    if not vRP.SelectVehicle(Passport,StarterVehicle) then
+    if GrantLocks[Passport] then
+        return { success = false,status = "processing",granted = false }
+    end
+
+    GrantLocks[Passport] = true
+    local Success,Result = pcall(function()
+        prepareStarterVehicle()
+
+        local AlreadyMarked = vRP.SingleQuery("afstarter/get",{ Passport = Passport, Vehicle = StarterVehicle })
+        local OwnedVehicle = vRP.SelectVehicle(Passport,StarterVehicle)
+        if OwnedVehicle then
+            if not AlreadyMarked then
+                local MarkSuccess,MarkError = pcall(vRP.Query,"afstarter/set",{ Passport = Passport, Vehicle = StarterVehicle })
+                if not MarkSuccess then
+                    print(("[af_starter_vehicle] WARN marker_write_failed passport=%s status=already_owned error=%s"):format(Passport,tostring(MarkError)))
+                end
+            end
+
+            print(("[af_starter_vehicle] Panto já disponível para o passaporte %s; nenhuma duplicata criada."):format(Passport))
+            return { success = true,status = "already_owned",granted = false,available = true,vehicle = StarterVehicle }
+        end
+
+        if AlreadyMarked then
+            print(("[af_starter_vehicle] Marcador existente para o passaporte %s; nenhuma nova entrega realizada."):format(Passport))
+            return { success = true,status = "already_marked",granted = false,available = false,vehicle = StarterVehicle }
+        end
+
         vRP.Query("vehicles/addVehicles",{
             Passport = Passport,
             Vehicle = StarterVehicle,
@@ -57,10 +83,26 @@ local function giveStarterVehicle(Passport)
             Work = 0
         })
 
+        if not vRP.SelectVehicle(Passport,StarterVehicle) then
+            return { success = false,status = "vehicle_insert_failed",granted = false }
+        end
+
+        local MarkSuccess,MarkError = pcall(vRP.Query,"afstarter/set",{ Passport = Passport, Vehicle = StarterVehicle })
+        if not MarkSuccess then
+            print(("[af_starter_vehicle] WARN marker_write_failed passport=%s status=granted error=%s"):format(Passport,tostring(MarkError)))
+        end
+
         print(("[af_starter_vehicle] Panto entregue ao passaporte %s."):format(Passport))
+        return { success = true,status = "granted",granted = true,available = true,vehicle = StarterVehicle }
+    end)
+
+    GrantLocks[Passport] = nil
+    if not Success then
+        print(("[af_starter_vehicle] ERROR grant_failed passport=%s error=%s"):format(Passport,tostring(Result)))
+        return { success = false,status = "failure",granted = false }
     end
 
-    vRP.Query("afstarter/set",{ Passport = Passport, Vehicle = StarterVehicle })
+    return Result
 end
 
 CreateThread(function()
@@ -68,16 +110,12 @@ CreateThread(function()
     prepareStarterVehicle()
 end)
 
-AddEventHandler("Connect",function(Passport)
-    CreateThread(function()
-        Wait(2000)
-
-        local ok,err = pcall(function()
-            giveStarterVehicle(Passport)
-        end)
-
-        if not ok then
-            print(("[af_starter_vehicle] Erro ao entregar panto ao passaporte %s: %s"):format(Passport or "nil",err))
-        end
-    end)
+exports("GiveStarterVehicle",function(Passport,Reason)
+    local Result = giveStarterVehicle(Passport)
+    print(("[af_starter_vehicle] grant_request passport=%s reason=%s status=%s"):format(
+        tostring(Passport),
+        tostring(Reason or "unspecified"):gsub("[\r\n]"," "):sub(1,80),
+        tostring(Result and Result.status or "failure")
+    ))
+    return Result
 end)

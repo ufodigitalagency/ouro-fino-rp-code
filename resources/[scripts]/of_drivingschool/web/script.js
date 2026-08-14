@@ -6,6 +6,7 @@
     const resultTitle = document.querySelector(".result__title");
     const resultReason = document.querySelector(".result__reason");
     const resultCategory = document.querySelector(".result__category");
+    const resultReward = document.querySelector(".result__reward");
     const checklistPanel = document.querySelector(".checklist");
     const checklistStage = document.querySelector(".checklist__stage span");
     const checklistInstruction = document.querySelector(".checklist__instruction");
@@ -44,6 +45,7 @@
 
     const hideResult = () => {
         body.classList.remove("has-result", "is-failed");
+        resultReward.hidden = true;
         resultPanel.setAttribute("aria-hidden", "true");
         syncBodyVisibility();
     };
@@ -141,6 +143,7 @@
             ? "Você foi aprovado na prova prática."
             : "A prova prática não foi concluída."));
         resultCategory.textContent = `CNH CATEGORIA ${String(payload.Category || "B").toUpperCase()}`;
+        resultReward.hidden = !(approved && payload.RewardGranted === true);
 
         body.classList.toggle("is-failed", !approved);
         body.classList.add("has-result");

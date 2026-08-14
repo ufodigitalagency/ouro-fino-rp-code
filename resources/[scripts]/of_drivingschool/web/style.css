@@ -442,6 +442,39 @@ body.has-guidance .guidance {
     letter-spacing: 0.09em;
 }
 
+.result__reward {
+    width: min(27rem, 100%);
+    margin: 1.25rem auto 0;
+    padding: 0.85rem 1rem;
+    color: rgba(246, 243, 234, 0.86);
+    border: 1px solid rgba(216, 173, 85, 0.38);
+    border-radius: 0.9rem;
+    background: rgba(216, 173, 85, 0.08);
+}
+
+.result__reward[hidden] {
+    display: none;
+}
+
+.result__reward-title,
+.result__reward-copy {
+    margin: 0;
+}
+
+.result__reward-title {
+    color: var(--gold);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.result__reward-copy {
+    margin-top: 0.35rem;
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
 body.is-failed {
     --accent: #ff5c6c;
     --accent-rgb: 255, 92, 108;

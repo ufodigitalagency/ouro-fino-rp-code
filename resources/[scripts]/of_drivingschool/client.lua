@@ -670,7 +670,12 @@ local function registerInstructorTarget()
                 {
                     event = "of_drivingschool:StartExam",
                     tunnel = "client",
-                    label = "Tirar CNH - Categoria B"
+                    label = "Tirar CNH - Categoria B ($ 1.000)"
+                },
+                {
+                    event = "of_drivingschool:CancelExam",
+                    tunnel = "client",
+                    label = "Desistir da prova"
                 }
             }
         })
@@ -768,7 +773,7 @@ local function showChecklistHud(State)
     })
 end
 
-local function showResult(Result,Reason,Category)
+local function showResult(Result,Reason,Category,RewardGranted,RewardStatus)
     local Normalized = Result == "approved" and "approved" or "failed"
     ResultGeneration = ResultGeneration + 1
     local Generation = ResultGeneration
@@ -779,7 +784,9 @@ local function showResult(Result,Reason,Category)
         Action = "showResult",
         Result = Normalized,
         Category = tostring(Category or Config.Exam.Category),
-        Reason = tostring(Reason or "")
+        Reason = tostring(Reason or ""),
+        RewardGranted = Normalized == "approved" and RewardGranted == true,
+        RewardStatus = tostring(RewardStatus or "")
     })
 
     SetTimeout(Config.ResultUi.DurationMs,function()
@@ -1398,7 +1405,7 @@ local function completeParking(Exam)
     Exam.State = "PARKING_COMPLETE"
     debugLog("parking_completed")
     cleanupExam(true)
-    showResult("approved",Result.message or "Voce foi aprovado na prova pratica.",Result.category or Config.Exam.Category)
+    showResult("approved",Result.message or "Voce foi aprovado na prova pratica.",Result.category or Config.Exam.Category,Result.rewardGranted == true,Result.rewardStatus)
     debugLog("exam_passed")
 end
 
@@ -1646,6 +1653,15 @@ end,false)
 
 AddEventHandler("of_drivingschool:StartExam",startExam)
 
+AddEventHandler("of_drivingschool:CancelExam",function()
+    if not ActiveExam then
+        notify("Você não possui uma prova prática ativa.","amarelo")
+        return
+    end
+
+    cancelActiveExam("player_cancelled","Você desistiu da prova prática.")
+end)
+
 RegisterNetEvent("of_drivingschool:ParkingReferencesUpdated",function(Token,Front,Rear)
     local Exam = ActiveExam
     if not Exam or tostring(Token or "") ~= Exam.Token then
@@ -1729,14 +1745,14 @@ RegisterNetEvent("of_drivingschool:ShowFailed",function(Reason,Category)
     showResult("failed",Reason or "A prova pratica nao foi concluida.",Category)
 end)
 
-RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,Category)
+RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,Category,RewardGranted,RewardStatus)
     local Exam = ActiveExam
     if not Exam or tostring(Token or "") ~= Exam.Token then
         return
     end
 
     cleanupExam(true)
-    showResult(Approved == true and "approved" or "failed",Reason,Category)
+    showResult(Approved == true and "approved" or "failed",Reason,Category,RewardGranted == true,RewardStatus)
     debugLog(Approved == true and "exam_passed" or "exam_failed")
 end)
 

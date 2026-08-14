@@ -1708,6 +1708,44 @@ function API.RegisterVehicle(Token,Slot,Network)
         return response(false,"spawn_physically_occupied","A vaga foi ocupada antes da confirmacao do veiculo.",{ terminate = true })
     end
 
+    local ExamFee = math.max(0,math.floor(tonumber(Config.Exam.Fee) or 1000))
+    if not Session.TestMode and ExamFee > 0 and not Session.ExamFeePaid then
+        if Session.ExamFeeProcessing then
+            return response(false,"payment_processing","O pagamento da prova já está sendo processado.")
+        end
+
+        Session.ExamFeeProcessing = true
+        local PaymentSuccess,Paid = pcall(vRP.PaymentFull,Session.Passport,ExamFee,true)
+
+        if ExamSessions[PlayerSource] ~= Session then
+            if PaymentSuccess and Paid then
+                print(("[of_drivingschool] WARN exam_fee_paid_after_session_cleanup source=%s passport=%s amount=%s"):format(PlayerSource,Session.Passport,ExamFee))
+            end
+            if DoesEntityExist(Vehicle) then
+                DeleteEntity(Vehicle)
+            end
+            return response(false,"invalid_session","A sessão foi encerrada durante o pagamento.",{ terminate = true })
+        end
+
+        Session.ExamFeeProcessing = false
+        if not PaymentSuccess or not Paid then
+            if DoesEntityExist(Vehicle) then
+                DeleteEntity(Vehicle)
+            end
+            cleanupSession(PlayerSource,PaymentSuccess and "insufficient_funds" or "payment_failed",false)
+            if not PaymentSuccess then
+                print(("[of_drivingschool] WARN exam_fee_payment_failed source=%s passport=%s amount=%s"):format(PlayerSource,Session.Passport,ExamFee))
+            end
+            local FailureMessage = PaymentSuccess
+                and "A prova prática da CNH custa $ 1.000. Verifique seu dinheiro e saldo bancário."
+                or "Não foi possível processar o pagamento da prova prática agora."
+            return response(false,PaymentSuccess and "insufficient_funds" or "payment_failed",FailureMessage,{ terminate = true })
+        end
+
+        Session.ExamFeePaid = true
+        debugLog(("exam_fee_paid source=%s passport=%s amount=%s"):format(PlayerSource,Session.Passport,ExamFee))
+    end
+
     Session.VehicleNetId = NetworkId
     Session.State = "WAITING_FOR_DRIVER"
     Session.LastActivityAt = os.time()
@@ -2209,6 +2247,8 @@ function API.CompleteParking(Token,Network)
     Session.State = "PARKING_COMPLETE"
     local AlreadyLicensed = false
     local AuditSuccess = false
+    local RewardGranted = false
+    local RewardStatus = Session.TestMode and "test_mode" or "not_attempted"
     if not Session.TestMode then
         local LicenseCheckSuccess
         LicenseCheckSuccess,AlreadyLicensed = pcall(hasLicense,Session.Passport,Session.Category)
@@ -2243,6 +2283,25 @@ function API.CompleteParking(Token,Network)
                 tostring(AuditError)
             ))
         end
+
+        if GetResourceState("af_starter_vehicle") == "started" then
+            local RewardCallSuccess,RewardResult = pcall(function()
+                return exports["af_starter_vehicle"]:GiveStarterVehicle(Session.Passport,"practical_exam_pass")
+            end)
+            if RewardCallSuccess and type(RewardResult) == "table" then
+                RewardStatus = tostring(RewardResult.status or "unknown")
+                RewardGranted = RewardResult.success == true and RewardResult.granted == true
+                if RewardResult.success ~= true then
+                    print(("[of_drivingschool] CRITICAL starter_vehicle_reward_failed source=%s passport=%s status=%s"):format(PlayerSource,Session.Passport,RewardStatus))
+                end
+            else
+                RewardStatus = RewardCallSuccess and "invalid_result" or "export_error"
+                print(("[of_drivingschool] CRITICAL starter_vehicle_reward_failed source=%s passport=%s status=%s"):format(PlayerSource,Session.Passport,RewardStatus))
+            end
+        else
+            RewardStatus = "resource_unavailable"
+            print(("[of_drivingschool] CRITICAL starter_vehicle_reward_failed source=%s passport=%s status=%s"):format(PlayerSource,Session.Passport,RewardStatus))
+        end
     else
         debugLog(("exam_test_passed_without_persistence source=%s passport=%s category=%s"):format(PlayerSource,Session.Passport,Session.Category))
     end
@@ -2262,7 +2321,7 @@ function API.CompleteParking(Token,Network)
         cleanupSession(PlayerSource,"exam_passed",false)
     end
     if validPlayer(PlayerSource) then
-        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,ResultToken,true,"Voce foi aprovado na prova pratica.",ResultCategory)
+        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,ResultToken,true,"Voce foi aprovado na prova pratica.",ResultCategory,RewardGranted,RewardStatus)
     end
 
     return response(true,"exam_passed","Voce foi aprovado na prova pratica.",{
@@ -2270,7 +2329,9 @@ function API.CompleteParking(Token,Network)
         category = ResultCategory,
         auditWritten = AuditSuccess,
         alreadyLicensed = AlreadyLicensed == true,
-        testMode = Session.TestMode == true
+        testMode = Session.TestMode == true,
+        rewardGranted = RewardGranted,
+        rewardStatus = RewardStatus
     })
 end
 
