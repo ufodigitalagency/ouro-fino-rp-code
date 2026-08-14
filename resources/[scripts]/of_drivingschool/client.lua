@@ -6,6 +6,8 @@ local InstructorTargetRegistered = false
 local NextInstructorTargetLogAt = 0
 local InstructorSetupInProgress = {}
 local InstructorConfiguredSetup = {}
+local EvaluatorSetupInProgress = {}
+local EvaluatorConfiguredSetup = {}
 local ActiveExam = nil
 local StartBusy = false
 local ResourceStopping = false
@@ -212,6 +214,8 @@ local function clearPracticalState(Exam)
     Exam.StopHoldTargetMs = nil
     Exam.ParkingReferences = nil
     Exam.RoutePhysics = nil
+    Exam.Collision = nil
+    Exam.WaterIncident = nil
     Exam.RouteIncidentPending = nil
     Exam.NextCollisionReportAt = nil
     Exam.Rollover = nil
@@ -426,6 +430,193 @@ AddStateBagChangeHandler("OFCNHInstructorSetupRevision",nil,function(BagName,_,V
     local Network = NetworkGetNetworkIdFromEntity(Ped)
     local Generation = tonumber(Entity(Ped).state.OFCNHInstructorGeneration)
     configureNetworkedInstructor(Network,Generation,Revision,"state_bag")
+end)
+
+local function acknowledgeEvaluator(Network,Generation,Revision)
+    TriggerServerEvent("of_drivingschool:EvaluatorConfigured",Network,Generation,Revision)
+end
+
+local function resolveEvaluatorPlacement(Ped,Coords)
+    local Settings = Config.Evaluator or {}
+    local TimeoutAt = GetGameTimer() + (tonumber(Settings.GroundResolveTimeoutMs) or 5000)
+    local ProbeOffsets = { 1.0,5.0,20.0 }
+    local GroundZ = nil
+    local CollisionLoaded = false
+
+    repeat
+        RequestCollisionAtCoord(Coords.x,Coords.y,Coords.z)
+        CollisionLoaded = HasCollisionLoadedAroundEntity(Ped)
+
+        if CollisionLoaded then
+            for _,Offset in ipairs(ProbeOffsets) do
+                local Found,ResolvedZ = GetGroundZFor_3dCoord(Coords.x,Coords.y,Coords.z + Offset,false)
+                if nativeBool(Found) then
+                    GroundZ = ResolvedZ
+                    break
+                end
+            end
+        end
+
+        if not GroundZ then
+            Wait(100)
+        end
+    until GroundZ or ResourceStopping or GetGameTimer() >= TimeoutAt
+
+    local GroundResolved = GroundZ ~= nil
+    if not GroundResolved then
+        GroundZ = tonumber(Settings.GroundFallbackZ) or Coords.z
+        print(("[of_drivingschool] WARN evaluator_ground_unresolved; using ground_fallback_z=%.4f"):format(GroundZ))
+    end
+
+    local ModelMinimum,ModelMaximum = GetModelDimensions(GetEntityModel(Ped))
+    local MinimumZ = ModelMinimum and tonumber(ModelMinimum.z) or 0.0
+    local MaximumZ = ModelMaximum and tonumber(ModelMaximum.z) or 0.0
+    local FinalZ = GroundZ - MinimumZ + (tonumber(Settings.VisualZOffset) or 0.0)
+
+    return {
+        GroundZ = GroundZ,
+        GroundResolved = GroundResolved,
+        CollisionLoaded = CollisionLoaded,
+        MinimumZ = MinimumZ,
+        MaximumZ = MaximumZ,
+        FinalZ = FinalZ
+    }
+end
+
+local function configureNetworkedEvaluator(Network,Generation,Revision,Reason)
+    Network = math.floor(tonumber(Network) or 0)
+    Generation = math.floor(tonumber(Generation) or 0)
+    Revision = math.floor(tonumber(Revision) or 0)
+    if ResourceStopping or Network <= 0 or Generation <= 0 or Revision <= 0 then
+        return
+    end
+
+    local SetupToken = ("%s:%s"):format(Generation,Revision)
+    if EvaluatorConfiguredSetup[Network] == SetupToken then
+        acknowledgeEvaluator(Network,Generation,Revision)
+        return
+    end
+
+    if EvaluatorSetupInProgress[Network] == SetupToken then
+        return
+    end
+
+    EvaluatorSetupInProgress[Network] = SetupToken
+    CreateThread(function()
+        local Settings = Config.Evaluator or {}
+        local TimeoutAt = GetGameTimer() + (tonumber(Settings.ConfigureTimeoutMs) or 5000)
+        local Ped = NetworkGetEntityFromNetworkId(Network)
+
+        while not ResourceStopping and (Ped == 0 or not DoesEntityExist(Ped)) and GetGameTimer() < TimeoutAt do
+            Wait(100)
+            Ped = NetworkGetEntityFromNetworkId(Network)
+        end
+
+        local function finishSetup()
+            if EvaluatorSetupInProgress[Network] == SetupToken then
+                EvaluatorSetupInProgress[Network] = nil
+            end
+        end
+
+        if ResourceStopping or Ped == 0 or not DoesEntityExist(Ped) or not NetworkGetEntityIsNetworked(Ped) then
+            finishSetup()
+            return
+        end
+
+        if not NetworkHasControlOfEntity(Ped) then
+            finishSetup()
+            return
+        end
+
+        local State = Entity(Ped).state
+        local ExpectedModel = GetHashKey(Settings.Model or "s_m_m_autoshop_01")
+        if State.OFCNHEvaluator ~= true
+            or tonumber(State.OFCNHEvaluatorGeneration) ~= Generation
+            or tonumber(State.OFCNHEvaluatorSetupRevision) ~= Revision
+            or GetEntityModel(Ped) ~= ExpectedModel then
+            finishSetup()
+            return
+        end
+
+        local Placement = nil
+        local FinalCoords = nil
+        local SetupSuccess,Configured,SetupError = xpcall(function()
+            local Coords = Settings.Coords
+            if not Coords then
+                return false,"coords_missing"
+            end
+
+            Placement = resolveEvaluatorPlacement(Ped,Coords)
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,Placement.FinalZ,false,false,false)
+            SetEntityHeading(Ped,Coords.w)
+            SetEntityInvincible(Ped,true)
+            SetEntityCanBeDamaged(Ped,false)
+            SetBlockingOfNonTemporaryEvents(Ped,true)
+            TaskSetBlockingOfNonTemporaryEvents(Ped,true)
+            SetPedCanRagdoll(Ped,false)
+            SetPedDiesWhenInjured(Ped,false)
+            SetPedFleeAttributes(Ped,0,false)
+
+            if Settings.Scenario and Settings.Scenario ~= "" then
+                TaskStartScenarioInPlace(Ped,Settings.Scenario,0,true)
+                SetPedKeepTask(Ped,true)
+            end
+
+            Wait(0)
+            if ResourceStopping or not DoesEntityExist(Ped) or not NetworkHasControlOfEntity(Ped) then
+                return false,"entity_or_control_lost"
+            end
+
+            SetEntityCoordsNoOffset(Ped,Coords.x,Coords.y,Placement.FinalZ,false,false,false)
+            SetEntityHeading(Ped,Coords.w)
+            FreezeEntityPosition(Ped,true)
+            FinalCoords = GetEntityCoords(Ped)
+            return true,nil
+        end,function(Error)
+            return tostring(Error)
+        end)
+        finishSetup()
+
+        if not SetupSuccess or not Configured then
+            debugLog(("evaluator_setup_deferred network=%s generation=%s revision=%s reason=%s"):format(
+                Network,Generation,Revision,tostring(SetupSuccess and SetupError or Configured)
+            ))
+            return
+        end
+
+        EvaluatorConfiguredSetup[Network] = SetupToken
+        debugLog(("evaluator_configured network=%s generation=%s reason=%s ground_resolved=%s coords=%.4f,%.4f,%.4f frozen=%s"):format(
+            Network,
+            Generation,
+            tostring(Reason or "server_owner"),
+            boolText(Placement.GroundResolved),
+            FinalCoords.x,
+            FinalCoords.y,
+            FinalCoords.z,
+            boolText(IsEntityPositionFrozen(Ped))
+        ))
+        acknowledgeEvaluator(Network,Generation,Revision)
+    end)
+end
+
+RegisterNetEvent("of_drivingschool:ConfigureEvaluator",function(Network,Generation,Revision)
+    configureNetworkedEvaluator(Network,Generation,Revision,"server_owner")
+end)
+
+AddStateBagChangeHandler("OFCNHEvaluatorSetupRevision",nil,function(BagName,_,Value)
+    local Revision = tonumber(Value)
+    if ResourceStopping or not Revision or Revision <= 0 then
+        return
+    end
+
+    local Ped = GetEntityFromStateBagName(BagName)
+    if Ped == 0 or not DoesEntityExist(Ped) or not NetworkGetEntityIsNetworked(Ped) then
+        return
+    end
+
+    local Network = NetworkGetNetworkIdFromEntity(Ped)
+    local Generation = tonumber(Entity(Ped).state.OFCNHEvaluatorGeneration)
+    configureNetworkedEvaluator(Network,Generation,Revision,"state_bag")
 end)
 
 AddStateBagChangeHandler("OFCNHParkingReferenceSlot",nil,function(BagName,_,Value)
@@ -880,28 +1071,78 @@ local function observeRoutePhysics(Exam)
     local Infractions = Config.Exam.Infractions or {}
     local Collision = Infractions.Collision or {}
     local Rollover = Infractions.Rollover or {}
+    local Water = Infractions.Water or {}
     local BodyHealth = GetVehicleBodyHealth(Vehicle)
     local EngineHealth = GetVehicleEngineHealth(Vehicle)
     local Speed = GetEntitySpeed(Vehicle)
+
     Exam.RoutePhysics = Exam.RoutePhysics or {
         BodyHealth = BodyHealth,
         EngineHealth = EngineHealth,
         Speed = Speed
     }
 
-    if Collision.Enabled == true and Now >= (Exam.NextCollisionReportAt or 0) then
+    Exam.Collision = Exam.Collision or {
+        Latched = false,
+        ClearSince = nil
+    }
+
+    if Collision.Enabled == true then
         local BodyDrop = math.max(0.0,(tonumber(Exam.RoutePhysics.BodyHealth) or BodyHealth) - BodyHealth)
         local EngineDrop = math.max(0.0,(tonumber(Exam.RoutePhysics.EngineHealth) or EngineHealth) - EngineHealth)
         local PreviousSpeed = tonumber(Exam.RoutePhysics.Speed) or Speed
         local SpeedDrop = math.max(0.0,PreviousSpeed - Speed)
-        local MeaningfulDamage = BodyDrop >= (tonumber(Collision.BodyHealthDrop) or 35.0)
-            or EngineDrop >= (tonumber(Collision.EngineHealthDrop) or 45.0)
-        local MeaningfulImpact = PreviousSpeed >= (tonumber(Collision.MinimumSpeedMps) or 5.0)
-            and SpeedDrop >= (tonumber(Collision.MinimumSpeedDeltaMps) or 3.0)
+        local DamageImpact = BodyDrop >= (tonumber(Collision.BodyHealthDrop) or 0.5)
+            or EngineDrop >= (tonumber(Collision.EngineHealthDrop) or 0.5)
+        local MotionImpact = PreviousSpeed >= (tonumber(Collision.MinimumSpeedMps) or 0.35)
+            and SpeedDrop >= (tonumber(Collision.MinimumSpeedDeltaMps) or 0.15)
+        local CollisionSignal = HasEntityCollidedWithAnything(Vehicle)
+        local ImpactNow = CollisionSignal and (DamageImpact or MotionImpact)
 
-        if HasEntityCollidedWithAnything(Vehicle) and MeaningfulDamage and MeaningfulImpact then
-            Exam.NextCollisionReportAt = Now + math.max(1000,tonumber(Collision.CooldownMs) or 5000)
-            reportRouteIncident(Exam,"collision")
+        if ImpactNow then
+            Exam.Collision.ClearSince = nil
+            if not Exam.Collision.Latched and Now >= (Exam.NextCollisionReportAt or 0) then
+                Exam.NextCollisionReportAt = Now + math.max(500,tonumber(Collision.CooldownMs) or 1000)
+                local Applied,Consumed = reportRouteIncident(Exam,"collision")
+                if Applied or Consumed then
+                    Exam.Collision.Latched = true
+                end
+            end
+        elseif Exam.Collision.Latched then
+            if CollisionSignal then
+                Exam.Collision.ClearSince = nil
+            else
+                Exam.Collision.ClearSince = Exam.Collision.ClearSince or Now
+                if Now - Exam.Collision.ClearSince >= math.max(250,tonumber(Collision.RearmClearMs) or 650) then
+                    Exam.Collision.Latched = false
+                    Exam.Collision.ClearSince = nil
+                    debugLog("collision_rearmed")
+                end
+            end
+        end
+    end
+
+    Exam.WaterIncident = Exam.WaterIncident or {
+        Latched = false,
+        ClearSince = nil
+    }
+
+    if Water.Enabled == true then
+        local InWater = IsEntityInWater(Vehicle)
+        if InWater then
+            Exam.WaterIncident.ClearSince = nil
+            if not Exam.WaterIncident.Latched then
+                local Applied,Consumed = reportRouteIncident(Exam,"water")
+                if Applied or Consumed then
+                    Exam.WaterIncident.Latched = true
+                end
+            end
+        elseif Exam.WaterIncident.Latched then
+            Exam.WaterIncident.ClearSince = Exam.WaterIncident.ClearSince or Now
+            if Now - Exam.WaterIncident.ClearSince >= math.max(500,tonumber(Water.RearmClearMs) or 1500) then
+                Exam.WaterIncident.Latched = false
+                Exam.WaterIncident.ClearSince = nil
+            end
         end
     end
 
@@ -911,8 +1152,11 @@ local function observeRoutePhysics(Exam)
         Latched = false,
         NextReportAt = 0
     }
+
     if Rollover.Enabled == true then
-        local Rolled = IsEntityUpsidedown(Vehicle) or math.abs(GetEntityRoll(Vehicle)) >= (tonumber(Rollover.MinimumRollDegrees) or 70.0)
+        local Rolled = IsEntityUpsidedown(Vehicle)
+            or math.abs(GetEntityRoll(Vehicle)) >= (tonumber(Rollover.MinimumRollDegrees) or 70.0)
+
         if Rolled then
             Exam.Rollover.UprightSince = nil
             if not Exam.Rollover.Latched then

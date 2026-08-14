@@ -1,0 +1,254 @@
+#ofcnh-admin {
+    --ofcnh-gold: #d8ad55;
+    --ofcnh-bg: rgba(13, 16, 20, 0.96);
+    --ofcnh-text: #f6f3ea;
+    --ofcnh-muted: rgba(246, 243, 234, 0.58);
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    pointer-events: none;
+    font-family: "Manrope", "Segoe UI", sans-serif;
+}
+
+#ofcnh-admin .ofcnh-launcher {
+    position: absolute;
+    right: 2.2rem;
+    bottom: 2rem;
+    display: none;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.72rem 1rem;
+    color: var(--ofcnh-text);
+    border: 1px solid rgba(216, 173, 85, 0.48);
+    border-radius: 0.8rem;
+    background: linear-gradient(145deg, rgba(28, 31, 36, 0.97), rgba(11, 13, 16, 0.97));
+    box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.35);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 750;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+#ofcnh-admin.is-allowed .ofcnh-launcher {
+    display: inline-flex;
+}
+
+#ofcnh-admin .ofcnh-launcher__icon {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    color: #17120a;
+    border-radius: 0.5rem;
+    background: var(--ofcnh-gold);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+}
+
+#ofcnh-admin .ofcnh-backdrop {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+    background: rgba(2, 4, 6, 0.62);
+    backdrop-filter: blur(5px);
+    pointer-events: auto;
+}
+
+#ofcnh-admin .ofcnh-backdrop[hidden] {
+    display: none;
+}
+
+#ofcnh-admin .ofcnh-card {
+    width: min(38rem, calc(100vw - 3rem));
+    color: var(--ofcnh-text);
+    border: 1px solid rgba(216, 173, 85, 0.38);
+    border-radius: 1.1rem;
+    background:
+        radial-gradient(circle at 15% 0%, rgba(216, 173, 85, 0.13), transparent 42%),
+        var(--ofcnh-bg);
+    box-shadow: 0 2rem 6rem rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+#ofcnh-admin .ofcnh-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.35rem 1.45rem 1.15rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#ofcnh-admin .ofcnh-kicker {
+    color: var(--ofcnh-gold);
+    font-size: 0.63rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+#ofcnh-admin h2 {
+    margin: 0.25rem 0 0;
+    font-size: 1.45rem;
+}
+
+#ofcnh-admin .ofcnh-close {
+    width: 2rem;
+    height: 2rem;
+    color: var(--ofcnh-muted);
+    border: 0;
+    border-radius: 0.55rem;
+    background: rgba(255, 255, 255, 0.06);
+    font: inherit;
+    font-size: 1.3rem;
+    cursor: pointer;
+}
+
+#ofcnh-admin .ofcnh-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+    padding: 1.25rem 1.45rem 0;
+}
+
+#ofcnh-admin label {
+    display: grid;
+    gap: 0.42rem;
+    color: var(--ofcnh-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+#ofcnh-admin input,
+#ofcnh-admin select {
+    width: 100%;
+    height: 2.8rem;
+    padding: 0 0.85rem;
+    color: var(--ofcnh-text);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.65rem;
+    outline: none;
+    background: rgba(255, 255, 255, 0.055);
+    font: inherit;
+}
+
+#ofcnh-admin input:focus,
+#ofcnh-admin select:focus {
+    border-color: rgba(216, 173, 85, 0.75);
+    box-shadow: 0 0 0 2px rgba(216, 173, 85, 0.1);
+}
+
+#ofcnh-admin option {
+    color: #111;
+}
+
+#ofcnh-admin .ofcnh-reason-wrap {
+    margin: 0.9rem 1.45rem 0;
+}
+
+#ofcnh-admin .ofcnh-actions {
+    display: flex;
+    gap: 0.65rem;
+    padding: 1rem 1.45rem;
+}
+
+#ofcnh-admin .ofcnh-button {
+    min-height: 2.65rem;
+    flex: 1;
+    border: 1px solid transparent;
+    border-radius: 0.65rem;
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+#ofcnh-admin .ofcnh-button:disabled {
+    opacity: 0.45;
+    cursor: wait;
+}
+
+#ofcnh-admin .ofcnh-button--ghost {
+    color: var(--ofcnh-text);
+    border-color: rgba(255, 255, 255, 0.13);
+    background: rgba(255, 255, 255, 0.055);
+}
+
+#ofcnh-admin .ofcnh-button--grant {
+    color: #082116;
+    background: #55d995;
+}
+
+#ofcnh-admin .ofcnh-button--revoke {
+    color: #fff;
+    background: #cf4857;
+}
+
+#ofcnh-admin .ofcnh-result {
+    padding: 1rem 1.45rem 1.35rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#ofcnh-admin .ofcnh-result__message {
+    margin: 0;
+    color: var(--ofcnh-muted);
+    font-size: 0.78rem;
+}
+
+#ofcnh-admin .ofcnh-result__message.is-success {
+    color: #87eab6;
+}
+
+#ofcnh-admin .ofcnh-result__message.is-error {
+    color: #f0919b;
+}
+
+#ofcnh-admin .ofcnh-statuses {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    margin-top: 0.8rem;
+}
+
+#ofcnh-admin .ofcnh-status {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.6rem;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+#ofcnh-admin .ofcnh-status strong {
+    color: var(--ofcnh-gold);
+    font-size: 0.72rem;
+}
+
+#ofcnh-admin .ofcnh-status span {
+    color: var(--ofcnh-muted);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+}
+
+#ofcnh-admin .ofcnh-status--active span {
+    color: #73e2aa;
+}
+
+#ofcnh-admin .ofcnh-status--revoked span,
+#ofcnh-admin .ofcnh-status--suspended span {
+    color: #ef7f8a;
+}
+
+@media (max-width: 700px) {
+    #ofcnh-admin .ofcnh-grid,
+    #ofcnh-admin .ofcnh-statuses {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    #ofcnh-admin .ofcnh-actions {
+        flex-direction: column;
+    }
+}

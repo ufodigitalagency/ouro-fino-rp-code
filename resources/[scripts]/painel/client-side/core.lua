@@ -20,7 +20,9 @@ AddEventHandler("painel:Opened",function()
 		SetCursorLocation(0.5,0.5)
 		TriggerEvent("dynamic:Close")
 		TriggerEvent("hud:Active",false)
-		SendNUIMessage({ Action = "Open", Payload = vSERVER.Player() })
+		local PlayerData = vSERVER.Player()
+		SendNUIMessage({ Action = "Open", Payload = PlayerData })
+		SendNUIMessage({ Action = "OFCNHAdminVisibility", Payload = { Visible = PlayerData and PlayerData.Group == "Admin" } })
 	end
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
@@ -38,6 +40,8 @@ RegisterNUICallback("Close",function(Data,Callback)
 	SetCursorLocation(0.5,0.5)
 	TransitionFromBlurred(1000)
 	TriggerEvent("hud:Active",true)
+	SendNUIMessage({ Action = "OFCNHAdminVisibility", Payload = { Visible = false } })
+	vSERVER.CnhPanelClose()
 
 	Callback("Ok")
 end)
@@ -186,8 +190,21 @@ RegisterNUICallback("SavePermissions",function(Data,Callback)
 	Callback(vSERVER.SavePermissions(Data.Permissions))
 end)
 -----------------------------------------------------------------------------------------------------------------------------------------
+-- OFCNH ADMIN LOOKUP
+-----------------------------------------------------------------------------------------------------------------------------------------
+RegisterNUICallback("OFCNHAdminLookup",function(Data,Callback)
+    Callback(vSERVER.CnhLookup(Data))
+end)
+-----------------------------------------------------------------------------------------------------------------------------------------
+-- OFCNH ADMIN ACTION
+-----------------------------------------------------------------------------------------------------------------------------------------
+RegisterNUICallback("OFCNHAdminAction",function(Data,Callback)
+    Callback(vSERVER.CnhAction(Data))
+end)
+-----------------------------------------------------------------------------------------------------------------------------------------
 -- CONFIG
 -----------------------------------------------------------------------------------------------------------------------------------------
+
 RegisterNUICallback("Config",function(Data,Callback)
 	Callback({ GoalsItems = Config.GoalsItems })
 end)

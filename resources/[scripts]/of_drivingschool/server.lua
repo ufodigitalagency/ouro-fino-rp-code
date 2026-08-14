@@ -30,8 +30,19 @@ local InstructorOwnerConfigured = false
 local InstructorNextConfigureAt = 0
 local NextInstructorSpawnAt = 0
 local InstructorRespawnReason = "server_start"
+local EvaluatorNpc = 0
+local EvaluatorNetwork = 0
+local EvaluatorNpcCreating = false
+local EvaluatorNpcCreatedAt = 0
+local EvaluatorNpcMissingChecks = 0
+local EvaluatorNpcGeneration = 0
+local EvaluatorOwnerSource = 0
+local EvaluatorSetupRevision = 0
+local EvaluatorOwnerConfigured = false
+local EvaluatorNextConfigureAt = 0
+local EvaluatorNextSpawnAt = 0
+local EvaluatorRespawnReason = "server_start"
 local ResourceStopping = false
-
 local VALID_STATUS = {
     active = true,
     suspended = true,
@@ -352,6 +363,197 @@ RegisterNetEvent("of_drivingschool:InstructorConfigured",function(Network,Genera
         PlayerSource,
         InstructorNpcGeneration,
         InstructorSetupRevision
+    ))
+end)
+
+local function evaluatorValid(Ped)
+    Ped = Ped or EvaluatorNpc
+    local Settings = Config.Evaluator or {}
+    return Ped ~= 0
+        and DoesEntityExist(Ped)
+        and GetEntityType(Ped) == 1
+        and GetEntityModel(Ped) == GetHashKey(Settings.Model or "s_m_m_autoshop_01")
+end
+
+local function resetEvaluatorOwner(ResetRevision)
+    EvaluatorOwnerSource = 0
+    if ResetRevision then
+        EvaluatorSetupRevision = 0
+    end
+    EvaluatorOwnerConfigured = false
+    EvaluatorNextConfigureAt = 0
+end
+
+local function deleteEvaluator(Ped)
+    Ped = Ped or EvaluatorNpc
+    if Ped ~= 0 and DoesEntityExist(Ped) then
+        local Success,Error = pcall(DeleteEntity,Ped)
+        if not Success then
+            debugLog(("evaluator_delete_failed entity=%s error=%s"):format(tostring(Ped),tostring(Error)))
+        end
+    end
+
+    if Ped == EvaluatorNpc then
+        EvaluatorNpc = 0
+        EvaluatorNetwork = 0
+        EvaluatorNpcCreatedAt = 0
+        EvaluatorNpcMissingChecks = 0
+        resetEvaluatorOwner(true)
+    end
+end
+
+local function failEvaluatorCreation(Ped,Reason)
+    deleteEvaluator(Ped)
+    EvaluatorNpcCreating = false
+    EvaluatorNextSpawnAt = GetGameTimer() + (tonumber(Config.Evaluator and Config.Evaluator.RespawnDebounceMs) or 5000)
+    EvaluatorRespawnReason = tostring(Reason or "creation_failed")
+    debugLog(("evaluator_creation_failed reason=%s"):format(tostring(Reason)))
+    return false
+end
+
+local function createEvaluator(Reason)
+    if ResourceStopping or not Config.Evaluator or Config.Evaluator.Enabled == false then
+        return false
+    end
+
+    if evaluatorValid() then
+        return true
+    end
+
+    if EvaluatorNpc ~= 0 or EvaluatorNpcCreating or GetGameTimer() < EvaluatorNextSpawnAt then
+        return false
+    end
+
+    local Coords = Config.Evaluator.Coords
+    if not Coords then
+        return false
+    end
+
+    EvaluatorNpcCreating = true
+    local Model = GetHashKey(Config.Evaluator.Model or "s_m_m_autoshop_01")
+    local CreateSuccess,Ped = pcall(CreatePed,4,Model,Coords.x,Coords.y,Coords.z,Coords.w,true,true)
+    if not CreateSuccess or not Ped or Ped == 0 then
+        return failEvaluatorCreation(0,CreateSuccess and "create_ped_returned_zero" or "create_ped_failed:"..tostring(Ped))
+    end
+
+    local TimeoutAt = GetGameTimer() + (tonumber(Config.Evaluator.CreateTimeoutMs) or 5000)
+    while not ResourceStopping and not DoesEntityExist(Ped) and GetGameTimer() < TimeoutAt do
+        Wait(50)
+    end
+
+    if ResourceStopping or not DoesEntityExist(Ped) then
+        return failEvaluatorCreation(Ped,ResourceStopping and "resource_stopping" or "entity_creation_timeout")
+    end
+
+    local Network = NetworkGetNetworkIdFromEntity(Ped)
+    while not ResourceStopping and DoesEntityExist(Ped) and (not Network or Network == 0) and GetGameTimer() < TimeoutAt do
+        Wait(50)
+        Network = NetworkGetNetworkIdFromEntity(Ped)
+    end
+
+    if ResourceStopping or not Network or Network == 0 then
+        return failEvaluatorCreation(Ped,ResourceStopping and "resource_stopping" or "network_id_timeout")
+    end
+
+    local OrphanSuccess,OrphanError = pcall(SetEntityOrphanMode,Ped,2)
+    if not OrphanSuccess then
+        return failEvaluatorCreation(Ped,"orphan_mode_failed:"..tostring(OrphanError))
+    end
+
+    EvaluatorNpcGeneration = EvaluatorNpcGeneration + 1
+    local StateSuccess,StateError = pcall(function()
+        local State = Entity(Ped).state
+        State:set("OFCNHEvaluatorGeneration",EvaluatorNpcGeneration,true)
+        State:set("OFCNHEvaluator",true,true)
+    end)
+    if not StateSuccess then
+        return failEvaluatorCreation(Ped,"state_bag_failed:"..tostring(StateError))
+    end
+
+    EvaluatorNpc = Ped
+    EvaluatorNetwork = Network
+    EvaluatorNpcCreatedAt = GetGameTimer()
+    EvaluatorNpcMissingChecks = 0
+    EvaluatorNpcCreating = false
+    EvaluatorNextSpawnAt = 0
+    EvaluatorRespawnReason = nil
+    resetEvaluatorOwner(true)
+
+    debugLog(("evaluator_created entity=%s network=%s generation=%s reason=%s"):format(
+        EvaluatorNpc,
+        EvaluatorNetwork,
+        EvaluatorNpcGeneration,
+        tostring(Reason or "server_start")
+    ))
+    return true
+end
+
+local function configureEvaluatorOwner()
+    if not evaluatorValid() then
+        return
+    end
+
+    local Owner = tonumber(NetworkGetEntityOwner(EvaluatorNpc)) or -1
+    if Owner <= 0 then
+        if EvaluatorOwnerSource ~= 0 then
+            resetEvaluatorOwner(false)
+        end
+        return
+    end
+
+    if Owner ~= EvaluatorOwnerSource then
+        EvaluatorOwnerSource = Owner
+        EvaluatorSetupRevision = EvaluatorSetupRevision + 1
+        EvaluatorOwnerConfigured = false
+        EvaluatorNextConfigureAt = 0
+    end
+
+    if not EvaluatorOwnerConfigured and GetGameTimer() >= EvaluatorNextConfigureAt then
+        local StatePublished,StateError = pcall(function()
+            Entity(EvaluatorNpc).state:set("OFCNHEvaluatorSetupRevision",EvaluatorSetupRevision,true)
+        end)
+
+        if StatePublished then
+            TriggerClientEvent(
+                "of_drivingschool:ConfigureEvaluator",
+                EvaluatorOwnerSource,
+                EvaluatorNetwork,
+                EvaluatorNpcGeneration,
+                EvaluatorSetupRevision
+            )
+        else
+            debugLog(("evaluator_setup_state_failed entity=%s error=%s"):format(
+                tostring(EvaluatorNpc),tostring(StateError)
+            ))
+        end
+
+        EvaluatorNextConfigureAt = GetGameTimer() + (tonumber(Config.Evaluator.ConfigureRetryMs) or 5000)
+    end
+end
+
+RegisterNetEvent("of_drivingschool:EvaluatorConfigured",function(Network,Generation,Revision)
+    local PlayerSource = source
+    if not evaluatorValid() or PlayerSource ~= EvaluatorOwnerSource then
+        return
+    end
+
+    if tonumber(Network) ~= EvaluatorNetwork
+        or tonumber(Generation) ~= EvaluatorNpcGeneration
+        or tonumber(Revision) ~= EvaluatorSetupRevision then
+        return
+    end
+
+    if tonumber(NetworkGetEntityOwner(EvaluatorNpc)) ~= PlayerSource then
+        return
+    end
+
+    EvaluatorOwnerConfigured = true
+    debugLog(("evaluator_owner_configured entity=%s network=%s owner=%s generation=%s revision=%s"):format(
+        EvaluatorNpc,
+        EvaluatorNetwork,
+        PlayerSource,
+        EvaluatorNpcGeneration,
+        EvaluatorSetupRevision
     ))
 end)
 
@@ -1659,7 +1861,7 @@ function API.ReportRouteIncident(Token,Network,Kind)
     end
 
     local IncidentKind = tostring(Kind or ""):lower()
-    local ConfigKey = IncidentKind == "collision" and "Collision" or IncidentKind == "rollover" and "Rollover" or nil
+    local ConfigKey = IncidentKind == "collision" and "Collision" or IncidentKind == "rollover" and "Rollover" or IncidentKind == "water" and "Water" or nil
     local IncidentConfig = ConfigKey and Config.Exam.Infractions and Config.Exam.Infractions[ConfigKey] or nil
     if not IncidentConfig or IncidentConfig.Enabled ~= true then
         return response(false,"invalid_incident","")
@@ -1684,8 +1886,12 @@ function API.ReportRouteIncident(Token,Network,Kind)
     Session.IncidentSequences[IncidentKind] = (tonumber(Session.IncidentSequences[IncidentKind]) or 0) + 1
     Session.NextIncidentAt[IncidentKind] = Now + math.max(1000,tonumber(IncidentConfig.CooldownMs) or 5000)
     Session.NextPhysicalIncidentAt = Now + math.max(1000,tonumber(Config.Exam.Infractions.PhysicalIncidentCooldownMs) or 5000)
-    local Reason = IncidentKind == "rollover" and "Perda de controle do veículo." or "Colisão detectada."
-    local Applied,Failed = applyExamPenalty(
+    local IncidentReasons = {
+        collision = "Colisão detectada.",
+        rollover = "Perda de controle do veículo.",
+        water = "Veículo entrou na água."
+    }
+    local Reason = IncidentReasons[IncidentKind] or "Incidente físico detectado."    local Applied,Failed = applyExamPenalty(
         PlayerSource,
         Session,
         ("route_%s:%s"):format(IncidentKind,Session.IncidentSequences[IncidentKind]),
@@ -2151,6 +2357,55 @@ local function performLicenseAction(PlayerSource,Args,Action,ActionSource,ActorP
     }
 end
 
+exports("AdminLicenseAction",function(PlayerSource,TargetPassport,Category,Action,Reason)
+    PlayerSource = tonumber(PlayerSource) or 0
+    local ActorPassport = passport(PlayerSource)
+    if not ActorPassport or not isAdmin(ActorPassport) then
+        return {
+            success = false,
+            message = "Acesso negado."
+        }
+    end
+
+    Action = tostring(Action or ""):lower()
+    if Action ~= "grant" and Action ~= "revoke" then
+        return {
+            success = false,
+            message = "Ação de CNH inválida."
+        }
+    end
+
+    Reason = tostring(Reason or ""):gsub("[%c<>]"," "):gsub("%s+"," ")
+    Reason = Reason:match("^%s*(.-)%s*$") or ""
+    if Action == "revoke" and Reason == "" then
+        return {
+            success = false,
+            message = "Informe o motivo da remoção da CNH."
+        }
+    end
+
+    local Args = {
+        tostring(TargetPassport or ""),
+        tostring(Category or Config.DefaultCategory or "B"),
+        tostring(Reason or "")
+    }
+    local Success,Message,Data = performLicenseAction(
+        PlayerSource,
+        Args,
+        Action,
+        "admin_panel",
+        ActorPassport
+    )
+
+    return {
+        success = Success == true,
+        message = Message or "",
+        passport = Data and Data.Passport or tonumber(TargetPassport),
+        category = Data and Data.Category or tostring(Category or ""),
+        auditWritten = Data and Data.AuditWritten == true or false
+    }
+end)
+
 RegisterCommand("cnhdar",function(PlayerSource,Args)
     if PlayerSource <= 0 then
         print("[of_drivingschool] Use ofcnhgrant no console do FXServer.")
@@ -2460,6 +2715,43 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    while not ResourceStopping do
+        if Config.Evaluator and Config.Evaluator.Enabled ~= false then
+            if evaluatorValid() then
+                if EvaluatorNpcMissingChecks > 0 then
+                    debugLog(("evaluator_watchdog_recovered entity=%s after_missing_checks=%s"):format(
+                        EvaluatorNpc,EvaluatorNpcMissingChecks
+                    ))
+                end
+
+                EvaluatorNpcMissingChecks = 0
+                configureEvaluatorOwner()
+            elseif EvaluatorNpc ~= 0 then
+                local MissingThreshold = math.max(3,tonumber(Config.Evaluator.MissingChecksBeforeRespawn) or 3)
+                EvaluatorNpcMissingChecks = EvaluatorNpcMissingChecks + 1
+                if EvaluatorNpcMissingChecks >= MissingThreshold then
+                    if evaluatorValid() then
+                        EvaluatorNpcMissingChecks = 0
+                    else
+                        EvaluatorNpc = 0
+                        EvaluatorNetwork = 0
+                        EvaluatorNpcCreatedAt = 0
+                        EvaluatorNpcMissingChecks = 0
+                        EvaluatorRespawnReason = "watchdog_consecutive_missing_checks"
+                        EvaluatorNextSpawnAt = GetGameTimer() + (tonumber(Config.Evaluator.RespawnDebounceMs) or 5000)
+                        resetEvaluatorOwner(true)
+                    end
+                end
+            elseif not EvaluatorNpcCreating and GetGameTimer() >= EvaluatorNextSpawnAt then
+                createEvaluator(EvaluatorRespawnReason)
+            end
+        end
+
+        Wait(math.max(500,tonumber(Config.Evaluator and Config.Evaluator.HealthCheckMs) or 2000))
+    end
+end)
+
+CreateThread(function()
     while true do
         Wait(Config.Exam.ServerWatchdogMs)
 
@@ -2610,6 +2902,7 @@ AddEventHandler("onResourceStop",function(ResourceName)
 
     ResourceStopping = true
     deleteInstructor(InstructorNpc)
+    deleteEvaluator(EvaluatorNpc)
     deleteParkingReference("Front")
     deleteParkingReference("Rear")
 

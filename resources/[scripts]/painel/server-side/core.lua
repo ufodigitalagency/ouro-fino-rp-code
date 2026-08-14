@@ -121,6 +121,141 @@ function Lil.Player()
         Permissions = Permissions
     }
 end
+local function CnhPanelAdmin()
+    local PlayerSource = source
+    local Passport = vRP.Passport(PlayerSource)
+    if not Passport or Division[Passport] ~= "Admin" then
+        return nil,nil
+    end
+
+    local Level = vRP.HasPermission(Passport,"Admin")
+    if not Level then
+        return nil,nil
+    end
+
+    return Passport,Level
+end
+
+local function CnhPanelTarget(Value)
+    local TargetPassport = math.floor(tonumber(Value) or 0)
+    if TargetPassport <= 0 or not vRP.Identity(TargetPassport) then
+        return nil
+    end
+
+    return TargetPassport
+end
+
+function Lil.CnhPanelClose()
+    local PlayerSource = source
+    local Passport = vRP.Passport(PlayerSource)
+    if Passport and Division[Passport] == "Admin" then
+        Division[Passport] = nil
+    end
+
+    return true
+end
+
+function Lil.CnhLookup(Data)
+    local PlayerSource = source
+    local ActorPassport = CnhPanelAdmin()
+    if not ActorPassport then
+        return { success = false, message = "Você não possui permissão para gerenciar CNHs." }
+    end
+
+    local TargetPassport = CnhPanelTarget(Data and Data.Passport)
+    if not TargetPassport then
+        return { success = false, message = "Passaporte inválido." }
+    end
+
+    if GetResourceState("of_drivingschool") ~= "started" then
+        return { success = false, message = "A Autoescola está indisponível no momento." }
+    end
+
+    local Success,Rows = pcall(function()
+        return exports["of_drivingschool"]:ListLicenses(TargetPassport)
+    end)
+    if not Success then
+        return { success = false, message = "Não foi possível consultar as CNHs." }
+    end
+
+    local Licenses = {}
+    for _,License in ipairs(Rows or {}) do
+        Licenses[#Licenses + 1] = {
+            Category = tostring(License.Category or ""),
+            Status = tostring(License.Status or "")
+        }
+    end
+
+    return {
+        success = true,
+        passport = TargetPassport,
+        name = vRP.FullName(TargetPassport),
+        licenses = Licenses
+    }
+end
+
+function Lil.CnhAction(Data)
+    local PlayerSource = source
+    local ActorPassport = CnhPanelAdmin()
+    if not ActorPassport then
+        return { success = false, message = "Você não possui permissão para gerenciar CNHs." }
+    end
+
+    local TargetPassport = CnhPanelTarget(Data and Data.Passport)
+    if not TargetPassport then
+        return { success = false, message = "Passaporte inválido." }
+    end
+
+    local Category = tostring(Data and Data.Category or "B"):upper()
+    if Category ~= "A" and Category ~= "B" and Category ~= "C" and Category ~= "D" then
+        return { success = false, message = "Categoria inválida." }
+    end
+
+    local Action = tostring(Data and Data.Action or ""):lower()
+    if Action ~= "grant" and Action ~= "revoke" then
+        return { success = false, message = "Ação de CNH inválida." }
+    end
+
+    local Reason = tostring(Data and Data.Reason or "")
+    Reason = Reason:gsub("[%c<>]"," "):gsub("%s+"," ")
+    Reason = Reason:match("^%s*(.-)%s*$") or ""
+    if Action == "revoke" and Reason == "" then
+        return { success = false, message = "Informe o motivo da remoção da CNH." }
+    end
+    if Reason == "" then
+        Reason = "Ação realizada pelo painel administrativo."
+    end
+    Reason = Reason:sub(1,255)
+
+    if GetResourceState("of_drivingschool") ~= "started" then
+        return { success = false, message = "A Autoescola está indisponível no momento." }
+    end
+
+    local Success,Result = pcall(function()
+        return exports["of_drivingschool"]:AdminLicenseAction(
+            PlayerSource,
+            TargetPassport,
+            Category,
+            Action,
+            Reason
+        )
+    end)
+
+    if not Success or type(Result) ~= "table" then
+        return { success = false, message = "Não foi possível processar a CNH." }
+    end
+
+    TriggerClientEvent(
+        "painel:Notify",
+        PlayerSource,
+        Result.success and "Sucesso" or "Atenção",
+        tostring(Result.message or ""),
+        Result.success and "verde" or "amarelo"
+    )
+
+    return Result
+end
+
 -----------------------------------------------------------------------------------------------------------------------------------------
 -- MEMBERS
 -----------------------------------------------------------------------------------------------------------------------------------------

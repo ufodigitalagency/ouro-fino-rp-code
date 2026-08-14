@@ -44,6 +44,22 @@ Config.Instructor = {
     MissingChecksBeforeRespawn = 3
 }
 
+Config.Evaluator = {
+    Enabled = true,
+    Coords = vec4(-2334.07,387.16,174.60,167.25),
+    GroundFallbackZ = 173.90,
+    VisualZOffset = -0.22,
+    Model = "s_m_m_autoshop_01",
+    Scenario = "WORLD_HUMAN_CLIPBOARD",
+    CreateTimeoutMs = 5000,
+    ConfigureTimeoutMs = 5000,
+    GroundResolveTimeoutMs = 5000,
+    ConfigureRetryMs = 5000,
+    RespawnDebounceMs = 5000,
+    HealthCheckMs = 2000,
+    MissingChecksBeforeRespawn = 3
+}
+
 Config.Exam = {
     Category = "B",
     VehicleModel = "sentinel3",
@@ -52,16 +68,25 @@ Config.Exam = {
         StartingPoints = 3
     },
     Infractions = {
-        PhysicalIncidentCooldownMs = 5000,
+        -- Shared window prevents one crash + the rollover caused by that same crash from charging twice.
+        PhysicalIncidentCooldownMs = 2500,
         Collision = {
             Enabled = true,
-            BodyHealthDrop = 35.0,
-            EngineHealthDrop = 45.0,
-            MinimumSpeedMps = 5.0,
-            MinimumSpeedDeltaMps = 3.0,
+            -- Intentionally sensitive: even a small pole/curb impact should cost one point.
+            BodyHealthDrop = 0.5,
+            EngineHealthDrop = 0.5,
+            MinimumSpeedMps = 0.35,
+            MinimumSpeedDeltaMps = 0.15,
+            RearmClearMs = 650,
+            CooldownMs = 1000
+        },
+        Water = {
+            Enabled = true,
+            RearmClearMs = 1500,
             CooldownMs = 5000
         },
         Rollover = {
+
             Enabled = true,
             MinimumRollDegrees = 70.0,
             HoldMs = 1250,
