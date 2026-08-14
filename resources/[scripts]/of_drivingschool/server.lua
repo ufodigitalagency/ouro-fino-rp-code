@@ -2247,7 +2247,7 @@ function API.CompleteParking(Token,Network)
     Session.State = "PARKING_COMPLETE"
     local AlreadyLicensed = false
     local AuditSuccess = false
-    local RewardGranted = false
+    local RewardConfirmed = false
     local RewardStatus = Session.TestMode and "test_mode" or "not_attempted"
     if not Session.TestMode then
         local LicenseCheckSuccess
@@ -2290,7 +2290,7 @@ function API.CompleteParking(Token,Network)
             end)
             if RewardCallSuccess and type(RewardResult) == "table" then
                 RewardStatus = tostring(RewardResult.status or "unknown")
-                RewardGranted = RewardResult.success == true and RewardResult.granted == true
+                RewardConfirmed = RewardResult.success == true and RewardResult.available == true
                 if RewardResult.success ~= true then
                     print(("[of_drivingschool] CRITICAL starter_vehicle_reward_failed source=%s passport=%s status=%s"):format(PlayerSource,Session.Passport,RewardStatus))
                 end
@@ -2321,7 +2321,7 @@ function API.CompleteParking(Token,Network)
         cleanupSession(PlayerSource,"exam_passed",false)
     end
     if validPlayer(PlayerSource) then
-        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,ResultToken,true,"Voce foi aprovado na prova pratica.",ResultCategory,RewardGranted,RewardStatus)
+        TriggerClientEvent("of_drivingschool:ExamFinished",PlayerSource,ResultToken,true,"Voce foi aprovado na prova pratica.",ResultCategory,RewardConfirmed,RewardStatus)
     end
 
     return response(true,"exam_passed","Voce foi aprovado na prova pratica.",{
@@ -2330,7 +2330,7 @@ function API.CompleteParking(Token,Network)
         auditWritten = AuditSuccess,
         alreadyLicensed = AlreadyLicensed == true,
         testMode = Session.TestMode == true,
-        rewardGranted = RewardGranted,
+        rewardConfirmed = RewardConfirmed,
         rewardStatus = RewardStatus
     })
 end

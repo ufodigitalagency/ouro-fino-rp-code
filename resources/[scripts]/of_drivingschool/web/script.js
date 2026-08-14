@@ -143,7 +143,7 @@
             ? "Você foi aprovado na prova prática."
             : "A prova prática não foi concluída."));
         resultCategory.textContent = `CNH CATEGORIA ${String(payload.Category || "B").toUpperCase()}`;
-        resultReward.hidden = !(approved && payload.RewardGranted === true);
+        resultReward.hidden = !(approved && payload.RewardConfirmed === true);
 
         body.classList.toggle("is-failed", !approved);
         body.classList.add("has-result");

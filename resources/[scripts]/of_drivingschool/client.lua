@@ -12,6 +12,7 @@ local ActiveExam = nil
 local StartBusy = false
 local ResourceStopping = false
 local ResultGeneration = 0
+local LastRewardNotificationToken = nil
 
 local function notify(Message,Color,Duration)
     TriggerEvent("Notify","Autoescola",Message,Color or "amarelo",Duration or 5000)
@@ -773,8 +774,9 @@ local function showChecklistHud(State)
     })
 end
 
-local function showResult(Result,Reason,Category,RewardGranted,RewardStatus)
+local function showResult(Result,Reason,Category,RewardConfirmed,RewardStatus,ResultToken)
     local Normalized = Result == "approved" and "approved" or "failed"
+    local ConfirmedReward = Normalized == "approved" and RewardConfirmed == true
     ResultGeneration = ResultGeneration + 1
     local Generation = ResultGeneration
     hideChecklistHud()
@@ -785,9 +787,15 @@ local function showResult(Result,Reason,Category,RewardGranted,RewardStatus)
         Result = Normalized,
         Category = tostring(Category or Config.Exam.Category),
         Reason = tostring(Reason or ""),
-        RewardGranted = Normalized == "approved" and RewardGranted == true,
+        RewardConfirmed = ConfirmedReward,
         RewardStatus = tostring(RewardStatus or "")
     })
+
+    local NotificationToken = tostring(ResultToken or "")
+    if ConfirmedReward and NotificationToken ~= "" and LastRewardNotificationToken ~= NotificationToken then
+        LastRewardNotificationToken = NotificationToken
+        notify("Parabéns! Você ganhou um Panto. Confira seu novo veículo na garagem.","verde")
+    end
 
     SetTimeout(Config.ResultUi.DurationMs,function()
         if Generation == ResultGeneration then
@@ -1104,7 +1112,10 @@ local function observeRoutePhysics(Exam)
         local MotionImpact = PreviousSpeed >= (tonumber(Collision.MinimumSpeedMps) or 0.35)
             and SpeedDrop >= (tonumber(Collision.MinimumSpeedDeltaMps) or 0.15)
         local CollisionSignal = HasEntityCollidedWithAnything(Vehicle)
-        local ImpactNow = CollisionSignal and (DamageImpact or MotionImpact)
+        local DamageCollision = DamageImpact
+            and PreviousSpeed >= (tonumber(Collision.MinimumSpeedMps) or 0.35)
+        local MotionCollision = CollisionSignal and MotionImpact
+        local ImpactNow = DamageCollision or MotionCollision
 
         if ImpactNow then
             Exam.Collision.ClearSince = nil
@@ -1116,7 +1127,7 @@ local function observeRoutePhysics(Exam)
                 end
             end
         elseif Exam.Collision.Latched then
-            if CollisionSignal then
+            if CollisionSignal or DamageImpact then
                 Exam.Collision.ClearSince = nil
             else
                 Exam.Collision.ClearSince = Exam.Collision.ClearSince or Now
@@ -1405,7 +1416,7 @@ local function completeParking(Exam)
     Exam.State = "PARKING_COMPLETE"
     debugLog("parking_completed")
     cleanupExam(true)
-    showResult("approved",Result.message or "Voce foi aprovado na prova pratica.",Result.category or Config.Exam.Category,Result.rewardGranted == true,Result.rewardStatus)
+    showResult("approved",Result.message or "Voce foi aprovado na prova pratica.",Result.category or Config.Exam.Category,Result.rewardConfirmed == true,Result.rewardStatus,Exam.Token)
     debugLog("exam_passed")
 end
 
@@ -1745,14 +1756,14 @@ RegisterNetEvent("of_drivingschool:ShowFailed",function(Reason,Category)
     showResult("failed",Reason or "A prova pratica nao foi concluida.",Category)
 end)
 
-RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,Category,RewardGranted,RewardStatus)
+RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,Category,RewardConfirmed,RewardStatus)
     local Exam = ActiveExam
     if not Exam or tostring(Token or "") ~= Exam.Token then
         return
     end
 
     cleanupExam(true)
-    showResult(Approved == true and "approved" or "failed",Reason,Category,RewardGranted == true,RewardStatus)
+    showResult(Approved == true and "approved" or "failed",Reason,Category,RewardConfirmed == true,RewardStatus,Token)
     debugLog(Approved == true and "exam_passed" or "exam_failed")
 end)
 
