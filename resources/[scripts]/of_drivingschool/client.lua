@@ -93,6 +93,60 @@ local function headingDifference(First,Second)
     return math.min(Difference,360.0 - Difference)
 end
 
+local function updateParkingReferenceNetworks(Exam,Front,Rear)
+    if not Exam then
+        return
+    end
+
+    Exam.ParkingReferences = Exam.ParkingReferences or {}
+    Exam.ParkingReferences.Front = tonumber(Front) or 0
+    Exam.ParkingReferences.Rear = tonumber(Rear) or 0
+end
+
+local function parkingReferenceEntity(Network)
+    local NetworkId = tonumber(Network) or 0
+    if NetworkId <= 0 or not NetworkDoesEntityExistWithNetworkId(NetworkId) then
+        return 0
+    end
+
+    local Vehicle = NetworkGetEntityFromNetworkId(NetworkId)
+    if Vehicle == 0 or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 then
+        return 0
+    end
+
+    local State = Entity(Vehicle).state
+    if State.OFCNHParkingReference ~= true then
+        return 0
+    end
+
+    return Vehicle
+end
+
+local function configureParkingReferenceEntity(Vehicle,Slot)
+    if Vehicle == 0 or not DoesEntityExist(Vehicle) then
+        return
+    end
+
+    local Parking = Config.Exam.Parking
+    local Coords = Slot == "Front" and Parking.FrontReference or Slot == "Rear" and Parking.RearReference or nil
+    if not Coords then
+        return
+    end
+
+    if NetworkHasControlOfEntity(Vehicle) then
+        FreezeEntityPosition(Vehicle,false)
+        SetEntityCoordsNoOffset(Vehicle,Coords.x,Coords.y,Coords.z,false,false,false)
+        SetEntityHeading(Vehicle,Coords.w)
+        SetVehicleOnGroundProperly(Vehicle)
+    end
+    SetEntityCollision(Vehicle,true,true)
+    SetVehicleEngineOn(Vehicle,false,true,true)
+    SetVehicleDoorsLocked(Vehicle,2)
+    SetVehicleDoorsLockedForAllPlayers(Vehicle,true)
+    SetVehicleUndriveable(Vehicle,true)
+    FreezeEntityPosition(Vehicle,true)
+end
+
 local function clearExamDestination(Exam)
     local Blip = Exam and Exam.DestinationBlip
     if Blip and DoesBlipExist(Blip) then
@@ -142,6 +196,7 @@ local function clearPracticalState(Exam)
     Exam.RouteUnavailable = false
     Exam.NextRouteStartAt = nil
     Exam.ParkingStarting = false
+    Exam.NextParkingStartAt = nil
     Exam.ParkingStartedAt = nil
     Exam.ParkingHoldStartedAt = nil
     Exam.UsedReverse = false
@@ -155,6 +210,16 @@ local function clearPracticalState(Exam)
     Exam.AntiAbuseOffRoute = false
     Exam.StopHoldMs = nil
     Exam.StopHoldTargetMs = nil
+    Exam.ParkingReferences = nil
+    Exam.RoutePhysics = nil
+    Exam.RouteIncidentPending = nil
+    Exam.NextCollisionReportAt = nil
+    Exam.Rollover = nil
+    Exam.NextDriverSeatHeartbeatAt = nil
+    Exam.ParkingWaitingOutside = nil
+    Exam.ParkingCollisionPending = false
+    Exam.TrafficVehicles = nil
+    Exam.NextTrafficInspectionAt = nil
 end
 
 local function loadModel(ModelName,TimeoutMs)
@@ -361,6 +426,26 @@ AddStateBagChangeHandler("OFCNHInstructorSetupRevision",nil,function(BagName,_,V
     local Network = NetworkGetNetworkIdFromEntity(Ped)
     local Generation = tonumber(Entity(Ped).state.OFCNHInstructorGeneration)
     configureNetworkedInstructor(Network,Generation,Revision,"state_bag")
+end)
+
+AddStateBagChangeHandler("OFCNHParkingReferenceSlot",nil,function(BagName,_,Value)
+    local Slot = tostring(Value or "")
+    if ResourceStopping or (Slot ~= "Front" and Slot ~= "Rear") then
+        return
+    end
+
+    CreateThread(function()
+        local TimeoutAt = GetGameTimer() + 5000
+        local Vehicle = GetEntityFromStateBagName(BagName)
+        while not ResourceStopping and (Vehicle == 0 or not DoesEntityExist(Vehicle)) and GetGameTimer() < TimeoutAt do
+            Wait(50)
+            Vehicle = GetEntityFromStateBagName(BagName)
+        end
+
+        if Vehicle ~= 0 and DoesEntityExist(Vehicle) and Entity(Vehicle).state.OFCNHParkingReference == true then
+            configureParkingReferenceEntity(Vehicle,Slot)
+        end
+    end)
 end)
 
 local function removeInstructorTarget()
@@ -759,6 +844,116 @@ local function handlePracticalFailure(Exam,Result)
     end
 end
 
+local function reportRouteIncident(Exam,Kind)
+    if not Exam or Exam.State ~= "ROUTE_ACTIVE" then
+        return false,false
+    end
+
+    Exam.RouteIncidentPending = Exam.RouteIncidentPending or {}
+    if Exam.RouteIncidentPending[Kind] then
+        return false,false
+    end
+
+    Exam.RouteIncidentPending[Kind] = true
+    local Result = vSERVER.ReportRouteIncident(Exam.Token,Exam.NetId,Kind)
+    if ActiveExam ~= Exam then
+        return false,false
+    end
+
+    Exam.RouteIncidentPending[Kind] = false
+    if Result and Result.success then
+        Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
+        debugLog(("route_incident_reported kind=%s remaining=%s"):format(Kind,tostring(Exam.RemainingPoints)))
+        return true,true
+    end
+
+    return false,Result and Result.consumed == true
+end
+
+local function observeRoutePhysics(Exam)
+    if not Exam or Exam.State ~= "ROUTE_ACTIVE" or not examVehicleMatches(Exam.Vehicle,Exam) then
+        return
+    end
+
+    local Vehicle = Exam.Vehicle
+    local Now = GetGameTimer()
+    local Infractions = Config.Exam.Infractions or {}
+    local Collision = Infractions.Collision or {}
+    local Rollover = Infractions.Rollover or {}
+    local BodyHealth = GetVehicleBodyHealth(Vehicle)
+    local EngineHealth = GetVehicleEngineHealth(Vehicle)
+    local Speed = GetEntitySpeed(Vehicle)
+    Exam.RoutePhysics = Exam.RoutePhysics or {
+        BodyHealth = BodyHealth,
+        EngineHealth = EngineHealth,
+        Speed = Speed
+    }
+
+    if Collision.Enabled == true and Now >= (Exam.NextCollisionReportAt or 0) then
+        local BodyDrop = math.max(0.0,(tonumber(Exam.RoutePhysics.BodyHealth) or BodyHealth) - BodyHealth)
+        local EngineDrop = math.max(0.0,(tonumber(Exam.RoutePhysics.EngineHealth) or EngineHealth) - EngineHealth)
+        local PreviousSpeed = tonumber(Exam.RoutePhysics.Speed) or Speed
+        local SpeedDrop = math.max(0.0,PreviousSpeed - Speed)
+        local MeaningfulDamage = BodyDrop >= (tonumber(Collision.BodyHealthDrop) or 35.0)
+            or EngineDrop >= (tonumber(Collision.EngineHealthDrop) or 45.0)
+        local MeaningfulImpact = PreviousSpeed >= (tonumber(Collision.MinimumSpeedMps) or 5.0)
+            and SpeedDrop >= (tonumber(Collision.MinimumSpeedDeltaMps) or 3.0)
+
+        if HasEntityCollidedWithAnything(Vehicle) and MeaningfulDamage and MeaningfulImpact then
+            Exam.NextCollisionReportAt = Now + math.max(1000,tonumber(Collision.CooldownMs) or 5000)
+            reportRouteIncident(Exam,"collision")
+        end
+    end
+
+    Exam.Rollover = Exam.Rollover or {
+        RolledSince = nil,
+        UprightSince = nil,
+        Latched = false,
+        NextReportAt = 0
+    }
+    if Rollover.Enabled == true then
+        local Rolled = IsEntityUpsidedown(Vehicle) or math.abs(GetEntityRoll(Vehicle)) >= (tonumber(Rollover.MinimumRollDegrees) or 70.0)
+        if Rolled then
+            Exam.Rollover.UprightSince = nil
+            if not Exam.Rollover.Latched then
+                Exam.Rollover.RolledSince = Exam.Rollover.RolledSince or Now
+                if Now - Exam.Rollover.RolledSince >= math.max(250,tonumber(Rollover.HoldMs) or 1250)
+                    and Now >= (Exam.Rollover.NextReportAt or 0) then
+                    Exam.Rollover.NextReportAt = Now + math.max(1000,tonumber(Rollover.CooldownMs) or 5000)
+                    local Applied,Consumed = reportRouteIncident(Exam,"rollover")
+                    if Applied or Consumed then
+                        Exam.Rollover.Latched = true
+                    end
+                end
+            end
+        else
+            Exam.Rollover.RolledSince = nil
+            if Exam.Rollover.Latched then
+                Exam.Rollover.UprightSince = Exam.Rollover.UprightSince or Now
+                if Now - Exam.Rollover.UprightSince >= math.max(250,tonumber(Rollover.RecoveryHoldMs) or 1500) then
+                    Exam.Rollover.Latched = false
+                    Exam.Rollover.UprightSince = nil
+                    debugLog("rollover_recovered")
+                end
+            end
+        end
+    end
+
+    Exam.RoutePhysics.BodyHealth = BodyHealth
+    Exam.RoutePhysics.EngineHealth = EngineHealth
+    Exam.RoutePhysics.Speed = Speed
+end
+
+local function sendDriverSeatHeartbeat(Exam)
+    local Now = GetGameTimer()
+    if not Exam or Now < (Exam.NextDriverSeatHeartbeatAt or 0) then
+        return
+    end
+
+    Exam.NextDriverSeatHeartbeatAt = Now + math.max(750,tonumber(Config.Exam.AntiAbuse and Config.Exam.AntiAbuse.DriverSeatHeartbeatIntervalMs) or 1000)
+    vSERVER.DriverSeatHeartbeat(Exam.Token,Exam.NetId)
+end
+
 local function beginRoute()
     local Exam = ActiveExam
     if not Exam or Exam.State ~= "READY_FOR_ROUTE" or Exam.RouteStarting or Exam.RouteUnavailable then
@@ -791,6 +986,10 @@ local function beginRoute()
     Exam.RouteIndex = tonumber(Result.routeIndex) or 1
     Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
     Exam.TestMode = Result.testMode == true or Exam.TestMode == true
+    Exam.RoutePhysics = nil
+    Exam.Rollover = nil
+    Exam.NextCollisionReportAt = 0
+    Exam.NextDriverSeatHeartbeatAt = 0
     hideChecklistHud()
     setRouteDestination(Exam,Exam.RouteIndex)
     showGuidanceHud(Exam,"PERCURSO","Siga a rota indicada.","normal")
@@ -853,7 +1052,7 @@ end
 
 beginParking = function()
     local Exam = ActiveExam
-    if not Exam or Exam.State ~= "ROUTE_COMPLETE" or Exam.ParkingStarting then
+    if not Exam or Exam.State ~= "ROUTE_COMPLETE" or Exam.ParkingStarting or GetGameTimer() < (Exam.NextParkingStartAt or 0) then
         return
     end
 
@@ -870,6 +1069,14 @@ beginParking = function()
 
     Exam.ParkingStarting = false
     if not Result or not Result.success then
+        if Result and (Result.code == "parking_area_busy" or Result.code == "parking_references_unavailable" or Result.code == "parking_waiting_position") then
+            Exam.NextParkingStartAt = GetGameTimer() + math.max(500,tonumber(Config.Exam.Parking.ReservationRetryMs) or 1500)
+            local Instruction = Result.code == "parking_area_busy" and "Aguarde. A área de baliza está sendo utilizada."
+                or Result.code == "parking_waiting_position" and "Retorne à área de início da baliza."
+                or "Aguarde. A área de baliza está sendo preparada."
+            showGuidanceHud(Exam,"BALIZA",Instruction,"warning")
+            return
+        end
         handlePracticalFailure(Exam,Result)
         return
     end
@@ -878,11 +1085,17 @@ beginParking = function()
     Exam.ParkingStartedAt = GetGameTimer()
     Exam.ParkingHoldStartedAt = nil
     Exam.AntiAbuseOffRoute = false
+    Exam.ParkingWaitingOutside = false
+    Exam.NextParkingStartAt = nil
     Exam.UsedReverse = Result.usedReverse == true
     Exam.RemainingPoints = tonumber(Result.remainingPoints) or Exam.RemainingPoints
     Exam.TestMode = Result.testMode == true or Exam.TestMode == true
     Exam.ReversePending = false
     Exam.PassRequestPending = false
+    Exam.ParkingCollisionPending = false
+    if Result.parkingReferences then
+        updateParkingReferenceNetworks(Exam,Result.parkingReferences.front,Result.parkingReferences.rear)
+    end
     setParkingDestination(Exam)
     showGuidanceHud(Exam,"BALIZA","Use a marcha ré e entre na vaga.","normal")
     debugLog("parking_started")
@@ -990,9 +1203,42 @@ local function processRoute(Exam,State)
     end
 end
 
+local function processParkingReferenceCollision(Exam)
+    if Exam.ParkingCollisionPending or GetGameTimer() < (Exam.NextParkingCollisionReportAt or 0) then
+        return false
+    end
+
+    Exam.ConfiguredParkingReferenceNetworks = Exam.ConfiguredParkingReferenceNetworks or {}
+    for Slot,Network in pairs(Exam.ParkingReferences or {}) do
+        local Reference = parkingReferenceEntity(Network)
+        if Reference ~= 0 then
+            if not Exam.ConfiguredParkingReferenceNetworks[Network] then
+                configureParkingReferenceEntity(Reference,Slot)
+                Exam.ConfiguredParkingReferenceNetworks[Network] = true
+            end
+
+            if IsEntityTouchingEntity(Exam.Vehicle,Reference) then
+                Exam.ParkingCollisionPending = true
+                Exam.NextParkingCollisionReportAt = GetGameTimer() + 1000
+                local Reported = vSERVER.ReportParkingReferenceCollision(Exam.Token,Exam.NetId,Network)
+                if ActiveExam == Exam then
+                    Exam.ParkingCollisionPending = false
+                end
+                return Reported == true
+            end
+        end
+    end
+
+    return false
+end
+
 local function processParking(Exam,State)
     local Parking = Config.Exam.Parking
     local Now = GetGameTimer()
+    if processParkingReferenceCollision(Exam) then
+        return
+    end
+
     if State.Seatbelt ~= true then
         Exam.ParkingHoldStartedAt = nil
         showGuidanceHud(Exam,"CINTO OBRIGATÓRIO","Coloque o cinto para continuar a prova.","warning")
@@ -1073,7 +1319,14 @@ local function startExam()
         WrongSeatNotified = false,
         RemainingPoints = tonumber(Result.remainingPoints) or tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
         MaximumPoints = tonumber(Config.Exam.Scoring and Config.Exam.Scoring.StartingPoints) or 3,
-        TestMode = Result.testMode == true
+        TestMode = Result.testMode == true,
+        ParkingReferences = {
+            Front = tonumber(Result.parkingReferences and Result.parkingReferences.front) or 0,
+            Rear = tonumber(Result.parkingReferences and Result.parkingReferences.rear) or 0
+        },
+        RouteIncidentPending = {},
+        NextDriverSeatHeartbeatAt = 0,
+        TrafficVehicles = {}
     }
 
     if ActiveExam.Token == "" or not ActiveExam.Slot then
@@ -1149,6 +1402,16 @@ end,false)
 
 AddEventHandler("of_drivingschool:StartExam",startExam)
 
+RegisterNetEvent("of_drivingschool:ParkingReferencesUpdated",function(Token,Front,Rear)
+    local Exam = ActiveExam
+    if not Exam or tostring(Token or "") ~= Exam.Token then
+        return
+    end
+
+    updateParkingReferenceNetworks(Exam,Front,Rear)
+    Exam.ConfiguredParkingReferenceNetworks = {}
+end)
+
 RegisterNetEvent("of_drivingschool:ScoreUpdated",function(Token,RemainingPoints,MaximumPoints,Amount,Reason)
     local Exam = ActiveExam
     if not Exam or tostring(Token or "") ~= Exam.Token then
@@ -1177,6 +1440,20 @@ RegisterNetEvent("of_drivingschool:AntiAbuseWarning",function(Token,OutsideRoute
     Exam.AntiAbuseOffRoute = OutsideRoute == true
     if Exam.AntiAbuseOffRoute then
         showGuidanceHud(Exam,"FORA DO PERCURSO","Retorne à rota da Autoescola.","danger")
+    end
+end)
+
+RegisterNetEvent("of_drivingschool:ParkingWaitingWarning",function(Token,OutsideArea)
+    local Exam = ActiveExam
+    if not Exam or tostring(Token or "") ~= Exam.Token or Exam.State ~= "ROUTE_COMPLETE" then
+        return
+    end
+
+    Exam.ParkingWaitingOutside = OutsideArea == true
+    if Exam.ParkingWaitingOutside then
+        showGuidanceHud(Exam,"BALIZA","Retorne à área de início da baliza.","danger")
+    else
+        showGuidanceHud(Exam,"BALIZA","Aguarde a liberação da área de baliza.","warning")
     end
 end)
 
@@ -1219,6 +1496,97 @@ RegisterNetEvent("of_drivingschool:ExamFinished",function(Token,Approved,Reason,
     debugLog(Approved == true and "exam_passed" or "exam_failed")
 end)
 
+local function vehicleHasPlayerOccupant(Vehicle)
+    local MaximumPassengers = math.max(0,GetVehicleMaxNumberOfPassengers(Vehicle))
+    for Seat = -1,MaximumPassengers do
+        local Occupant = GetPedInVehicleSeat(Vehicle,Seat)
+        if Occupant ~= 0 and DoesEntityExist(Occupant) and IsPedAPlayer(Occupant) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function ambientTrafficEligible(Exam,Vehicle,Center,Radius,ObstructionRadius)
+    if Vehicle == 0 or Vehicle == Exam.Vehicle or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 then
+        return false
+    end
+
+    for _,Network in pairs(Exam.ParkingReferences or {}) do
+        if parkingReferenceEntity(Network) == Vehicle then
+            return false
+        end
+    end
+
+    if IsEntityAMissionEntity(Vehicle) or vehicleHasPlayerOccupant(Vehicle) then
+        return false
+    end
+
+    local Driver = GetPedInVehicleSeat(Vehicle,-1)
+    if Driver == 0 or not DoesEntityExist(Driver) or IsPedAPlayer(Driver) then
+        return false
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    return #(Coords - Center) <= Radius and #(Coords - GetEntityCoords(Exam.Vehicle)) <= ObstructionRadius
+end
+
+CreateThread(function()
+    while true do
+        local WaitTime = 500
+        local Exam = ActiveExam
+        local Traffic = Config.Exam.Parking and Config.Exam.Parking.TrafficControl or {}
+        local CenterConfig = Config.Exam.Parking and Config.Exam.Parking.Center
+        if Exam and Exam.State == "PARKING_ACTIVE" and Traffic.Enabled == true and CenterConfig and examVehicleMatches(Exam.Vehicle,Exam) then
+            local Center = vector3(CenterConfig.x,CenterConfig.y,CenterConfig.z)
+            local Radius = math.max(10.0,tonumber(Traffic.Radius) or 35.0)
+            local ObstructionRadius = math.max(5.0,tonumber(Traffic.ObstructionRadius) or 15.0)
+            if #(GetEntityCoords(PlayerPedId()) - Center) <= Radius then
+                WaitTime = 0
+                SetVehicleDensityMultiplierThisFrame(0.0)
+                SetRandomVehicleDensityMultiplierThisFrame(0.0)
+                SetParkedVehicleDensityMultiplierThisFrame(0.0)
+
+                Exam.TrafficVehicles = Exam.TrafficVehicles or {}
+                local Now = GetGameTimer()
+                if Now >= (Exam.NextTrafficInspectionAt or 0) then
+                    Exam.NextTrafficInspectionAt = Now + math.max(250,tonumber(Traffic.InspectIntervalMs) or 1000)
+                    for _,Vehicle in ipairs(GetGamePool("CVehicle")) do
+                        if ambientTrafficEligible(Exam,Vehicle,Center,Radius,ObstructionRadius) then
+                            if not Exam.TrafficVehicles[Vehicle] then
+                                Exam.TrafficVehicles[Vehicle] = true
+                                local Driver = GetPedInVehicleSeat(Vehicle,-1)
+                                if Driver ~= 0 then
+                                    TaskVehicleDriveWander(Driver,Vehicle,tonumber(Traffic.WanderSpeedMps) or 8.0,786603)
+                                end
+                            end
+                        end
+                    end
+                end
+
+                for Vehicle in pairs(Exam.TrafficVehicles) do
+                    if ambientTrafficEligible(Exam,Vehicle,Center,Radius,ObstructionRadius) then
+                        SetEntityNoCollisionEntity(Vehicle,Exam.Vehicle,true)
+                        SetEntityNoCollisionEntity(Exam.Vehicle,Vehicle,true)
+                        for _,Network in pairs(Exam.ParkingReferences or {}) do
+                            local Reference = parkingReferenceEntity(Network)
+                            if Reference ~= 0 then
+                                SetEntityNoCollisionEntity(Vehicle,Reference,true)
+                                SetEntityNoCollisionEntity(Reference,Vehicle,true)
+                            end
+                        end
+                    else
+                        Exam.TrafficVehicles[Vehicle] = nil
+                    end
+                end
+            end
+        end
+
+        Wait(WaitTime)
+    end
+end)
+
 CreateThread(function()
     while not ResourceStopping do
         if GetResourceState("target") == "started" then
@@ -1256,7 +1624,7 @@ CreateThread(function()
                 if Exam.State == "WAITING_FOR_DRIVER" and CorrectSeat then
                     advanceChecklist("ENTER_DRIVER_SEAT")
                 elseif Exam.State ~= "WAITING_FOR_DRIVER" and not CorrectSeat then
-                    if Exam.State == "ROUTE_ACTIVE" or Exam.State == "PARKING_ACTIVE" then
+                    if Exam.State == "ROUTE_ACTIVE" or Exam.State == "ROUTE_COMPLETE" or Exam.State == "PARKING_ACTIVE" then
                         showGuidanceHud(Exam,"BANCO DO MOTORISTA","Retorne ao banco do motorista para continuar a prova.","warning")
                     elseif not Exam.WrongSeatNotified then
                         Exam.WrongSeatNotified = true
@@ -1264,6 +1632,12 @@ CreateThread(function()
                     end
                 elseif CorrectSeat then
                     Exam.WrongSeatNotified = false
+                    if Exam.State == "ROUTE_ACTIVE" or Exam.State == "ROUTE_COMPLETE" or Exam.State == "PARKING_ACTIVE" then
+                        sendDriverSeatHeartbeat(Exam)
+                    end
+                    if Exam.State == "ROUTE_ACTIVE" then
+                        observeRoutePhysics(Exam)
+                    end
                     if Exam.State == "WAITING_FOR_SEATBELT" then
                         if State.Seatbelt == nil then
                             cancelActiveExam("seatbelt_state_unavailable","Nao foi possivel consultar o estado do cinto pelo HUD.")

@@ -51,6 +51,24 @@ Config.Exam = {
     Scoring = {
         StartingPoints = 3
     },
+    Infractions = {
+        PhysicalIncidentCooldownMs = 5000,
+        Collision = {
+            Enabled = true,
+            BodyHealthDrop = 35.0,
+            EngineHealthDrop = 45.0,
+            MinimumSpeedMps = 5.0,
+            MinimumSpeedDeltaMps = 3.0,
+            CooldownMs = 5000
+        },
+        Rollover = {
+            Enabled = true,
+            MinimumRollDegrees = 70.0,
+            HoldMs = 1250,
+            RecoveryHoldMs = 1500,
+            CooldownMs = 5000
+        }
+    },
     StartServerDistance = 4.0,
     VehicleRegistrationDistance = 2.0,
     SpawnOccupancyRadius = 2.5,
@@ -138,6 +156,8 @@ Config.Exam = {
     },
     AntiAbuse = {
         DriverSeatGraceMs = 15000,
+        DriverSeatHeartbeatIntervalMs = 1000,
+        DriverSeatHeartbeatFreshnessMs = 3000,
         NoProgressTimeoutMs = 180000,
         MaxRouteDeviationMeters = 120.0,
         OffRouteGraceMs = 10000
@@ -155,6 +175,21 @@ Config.Exam = {
         ReverseSpeedMps = 0.20,
         ValidationIntervalMs = 100,
         FeedbackThrottleMs = 4000,
+        ReservationRetryMs = 1500,
+        WaitingAreaRadius = 25.0,
+        WaitingAreaGraceMs = 10000,
+        ReferenceVehicles = {
+            Model = "asea",
+            CreateTimeoutMs = 3000,
+            ContactValidationDistance = 6.0
+        },
+        TrafficControl = {
+            Enabled = true,
+            Radius = 35.0,
+            ObstructionRadius = 15.0,
+            InspectIntervalMs = 1000,
+            WanderSpeedMps = 8.0
+        },
         Blip = {
             Sprite = 1,
             Color = 5,

@@ -14,6 +14,10 @@ local ActivePassports = {}
 local SpawnReservations = {}
 local RateLimits = {}
 local ExamTestModes = {}
+local ParkingReferences = { Front = 0,Rear = 0 }
+local ParkingReferenceNetworks = { Front = 0,Rear = 0 }
+local ParkingReferencesCreating = false
+local ParkingAreaOwner = nil
 local InstructorNpc = 0
 local InstructorNetwork = 0
 local InstructorNpcCreating = false
@@ -56,6 +60,17 @@ local CHECKLIST_TRANSITIONS = {
 local function routeCheckpoints()
     local Route = Config.Exam and Config.Exam.Route
     return Route and type(Route.Checkpoints) == "table" and Route.Checkpoints or {}
+end
+
+local function parkingWaitingDistance(Vehicle)
+    local Points = routeCheckpoints()
+    local Point = Points[#Points]
+    if Vehicle == 0 or not Point or not Point.Coords then
+        return nil
+    end
+
+    local Coords = GetEntityCoords(Vehicle)
+    return #(Coords - vector3(Point.Coords.x,Point.Coords.y,Point.Coords.z))
 end
 
 local function checkpointRadius(Point)
@@ -637,6 +652,250 @@ local function rateAllowed(PlayerSource,Key,IntervalMs)
     return true
 end
 
+local function parkingReferenceDefinitions()
+    local Parking = Config.Exam.Parking or {}
+    return {
+        Front = Parking.FrontReference,
+        Rear = Parking.RearReference
+    }
+end
+
+local function parkingReferenceValid(Slot)
+    local Vehicle = ParkingReferences[Slot] or 0
+    if Vehicle == 0 or not DoesEntityExist(Vehicle) or GetEntityType(Vehicle) ~= 2 or GetEntityHealth(Vehicle) <= 0 then
+        return false
+    end
+
+    local ReferenceConfig = Config.Exam.Parking and Config.Exam.Parking.ReferenceVehicles or {}
+    if GetEntityModel(Vehicle) ~= GetHashKey(ReferenceConfig.Model or "asea") then
+        return false
+    end
+
+    local State = Entity(Vehicle).state
+    return State.OFCNHParkingReference == true and tostring(State.OFCNHParkingReferenceSlot or "") == Slot
+end
+
+local function deleteParkingReference(Slot)
+    local Vehicle = ParkingReferences[Slot] or 0
+    if Vehicle ~= 0 and DoesEntityExist(Vehicle) then
+        pcall(DeleteEntity,Vehicle)
+    end
+
+    ParkingReferences[Slot] = 0
+    ParkingReferenceNetworks[Slot] = 0
+end
+
+local function configureParkingReferenceServer(Vehicle,Slot,Coords)
+    local StateSuccess,StateError = pcall(function()
+        local State = Entity(Vehicle).state
+        State:set("OFCNHParkingReference",true,true)
+        State:set("OFCNHParkingReferenceSlot",Slot,true)
+    end)
+    if not StateSuccess then
+        return false,"state_bag_failed:"..tostring(StateError)
+    end
+
+    pcall(SetEntityOrphanMode,Vehicle,2)
+    pcall(SetEntityCoords,Vehicle,Coords.x,Coords.y,Coords.z,false,false,false,false)
+    pcall(SetEntityHeading,Vehicle,Coords.w)
+    pcall(SetEntityCollision,Vehicle,true,true)
+    pcall(SetVehicleEngineOn,Vehicle,false,true,true)
+    pcall(SetVehicleDoorsLocked,Vehicle,2)
+    pcall(SetVehicleUndriveable,Vehicle,true)
+    pcall(FreezeEntityPosition,Vehicle,true)
+    return true,nil
+end
+
+local function adoptExistingParkingReference(Slot,Coords)
+    local ReferenceConfig = Config.Exam.Parking.ReferenceVehicles or {}
+    local ExpectedModel = GetHashKey(ReferenceConfig.Model or "asea")
+    local Adopted = 0
+    for _,Vehicle in ipairs(GetAllVehicles()) do
+        if DoesEntityExist(Vehicle) and GetEntityType(Vehicle) == 2 and GetEntityHealth(Vehicle) > 0 and GetEntityModel(Vehicle) == ExpectedModel then
+            local State = Entity(Vehicle).state
+            local MatchesState = State.OFCNHParkingReference == true and tostring(State.OFCNHParkingReferenceSlot or "") == Slot
+            local MatchesPosition = #(GetEntityCoords(Vehicle) - vector3(Coords.x,Coords.y,Coords.z)) <= 2.0
+            if MatchesState and MatchesPosition then
+                if Adopted == 0 then
+                    Adopted = Vehicle
+                else
+                    pcall(DeleteEntity,Vehicle)
+                end
+            end
+        end
+    end
+
+    if Adopted == 0 then
+        return false
+    end
+
+    configureParkingReferenceServer(Adopted,Slot,Coords)
+    ParkingReferences[Slot] = Adopted
+    ParkingReferenceNetworks[Slot] = NetworkGetNetworkIdFromEntity(Adopted)
+    debugLog(("parking_reference_adopted slot=%s entity=%s network=%s"):format(Slot,Adopted,tostring(ParkingReferenceNetworks[Slot])))
+    return ParkingReferenceNetworks[Slot] and ParkingReferenceNetworks[Slot] ~= 0
+end
+
+local function createParkingReference(Slot,Coords)
+    if not Coords then
+        return false,"missing_coords"
+    end
+
+    deleteParkingReference(Slot)
+    local ReferenceConfig = Config.Exam.Parking.ReferenceVehicles or {}
+    local Model = GetHashKey(ReferenceConfig.Model or "asea")
+    local CreateSuccess,Vehicle = pcall(CreateVehicleServerSetter,Model,"automobile",Coords.x,Coords.y,Coords.z,Coords.w)
+    if not CreateSuccess or not Vehicle or Vehicle == 0 then
+        CreateSuccess,Vehicle = pcall(CreateVehicle,Model,Coords.x,Coords.y,Coords.z,Coords.w,true,true)
+    end
+
+    if not CreateSuccess or not Vehicle or Vehicle == 0 then
+        return false,"create_vehicle_failed"
+    end
+
+    local TimeoutAt = GetGameTimer() + math.max(500,tonumber(ReferenceConfig.CreateTimeoutMs) or 3000)
+    while not ResourceStopping and not DoesEntityExist(Vehicle) and GetGameTimer() < TimeoutAt do
+        Wait(25)
+    end
+
+    if ResourceStopping or not DoesEntityExist(Vehicle) then
+        pcall(DeleteEntity,Vehicle)
+        return false,"entity_creation_timeout"
+    end
+
+    local Configured,ConfigureError = configureParkingReferenceServer(Vehicle,Slot,Coords)
+    if not Configured then
+        pcall(DeleteEntity,Vehicle)
+        return false,ConfigureError
+    end
+
+    local Network = NetworkGetNetworkIdFromEntity(Vehicle)
+    if not Network or Network == 0 then
+        pcall(DeleteEntity,Vehicle)
+        return false,"network_id_unavailable"
+    end
+
+    ParkingReferences[Slot] = Vehicle
+    ParkingReferenceNetworks[Slot] = Network
+    debugLog(("parking_reference_created slot=%s entity=%s network=%s model=%s"):format(Slot,Vehicle,Network,tostring(ReferenceConfig.Model or "asea")))
+    return true,nil
+end
+
+local function parkingReferencePayload()
+    return {
+        front = tonumber(ParkingReferenceNetworks.Front) or 0,
+        rear = tonumber(ParkingReferenceNetworks.Rear) or 0
+    }
+end
+
+local function broadcastParkingReferences()
+    local Payload = parkingReferencePayload()
+    for PlayerSource,Session in pairs(ExamSessions) do
+        if validPlayer(PlayerSource) then
+            TriggerClientEvent("of_drivingschool:ParkingReferencesUpdated",PlayerSource,Session.Token,Payload.front,Payload.rear)
+        end
+    end
+end
+
+local function ensureParkingReferenceVehicles()
+    if ResourceStopping then
+        return false
+    end
+
+    if ParkingReferencesCreating then
+        local ReferenceConfig = Config.Exam.Parking.ReferenceVehicles or {}
+        local TimeoutAt = GetGameTimer() + (math.max(500,tonumber(ReferenceConfig.CreateTimeoutMs) or 3000) * 2)
+        while ParkingReferencesCreating and not ResourceStopping and GetGameTimer() < TimeoutAt do
+            Wait(25)
+        end
+        return parkingReferenceValid("Front") and parkingReferenceValid("Rear")
+    end
+
+    ParkingReferencesCreating = true
+    local Definitions = parkingReferenceDefinitions()
+    local Success = true
+    local Changed = false
+    for _,Slot in ipairs({ "Front","Rear" }) do
+        if not parkingReferenceValid(Slot) then
+            local Created,Error
+            if adoptExistingParkingReference(Slot,Definitions[Slot]) then
+                Created = true
+            else
+                Created,Error = createParkingReference(Slot,Definitions[Slot])
+            end
+            if not Created then
+                Success = false
+                print(("[of_drivingschool] WARN parking_reference_creation_failed slot=%s reason=%s"):format(Slot,tostring(Error)))
+            else
+                Changed = true
+            end
+        end
+    end
+    ParkingReferencesCreating = false
+
+    if Success and parkingReferenceValid("Front") and parkingReferenceValid("Rear") then
+        if Changed then
+            broadcastParkingReferences()
+        end
+        return true
+    end
+
+    return false
+end
+
+local function officialParkingReference(Network)
+    local NetworkId = tonumber(Network)
+    if not NetworkId then
+        return 0,nil
+    end
+
+    for _,Slot in ipairs({ "Front","Rear" }) do
+        local Vehicle = ParkingReferences[Slot] or 0
+        if tonumber(ParkingReferenceNetworks[Slot]) == NetworkId and Vehicle ~= 0 and DoesEntityExist(Vehicle) and GetEntityType(Vehicle) == 2 then
+            local State = Entity(Vehicle).state
+            if State.OFCNHParkingReference == true and tostring(State.OFCNHParkingReferenceSlot or "") == Slot then
+                return Vehicle,Slot
+            end
+        end
+    end
+
+    return 0,nil
+end
+
+local function activeParkingOwner()
+    if not ParkingAreaOwner then
+        return nil
+    end
+
+    local Session = ExamSessions[ParkingAreaOwner.Source]
+    if not Session or Session.Token ~= ParkingAreaOwner.Token or Session.State ~= "PARKING_ACTIVE" then
+        ParkingAreaOwner = nil
+        return nil
+    end
+
+    return Session
+end
+
+local function reserveParkingArea(Session)
+    local Owner = activeParkingOwner()
+    if Owner and Owner ~= Session then
+        return false
+    end
+
+    ParkingAreaOwner = {
+        Source = Session.Source,
+        Passport = Session.Passport,
+        Token = Session.Token
+    }
+    return true
+end
+
+local function releaseParkingArea(Session)
+    if ParkingAreaOwner and Session and ParkingAreaOwner.Source == Session.Source and ParkingAreaOwner.Token == Session.Token then
+        ParkingAreaOwner = nil
+    end
+end
+
 local function generateSessionToken(PlayerSource,Passport)
     SessionSequence = (SessionSequence % 999999) + 1
     return ("%s:%s:%s:%06d:%06d"):format(
@@ -703,6 +962,10 @@ local function cleanupSession(PlayerSource,Reason,NotifyClient,Message)
     end
 
     releaseSlot(Session)
+    releaseParkingArea(Session)
+    Session.LastDriverSeatHeartbeatAt = nil
+    Session.ParkingWaitingOutsideSince = nil
+    Session.ParkingWaitingWarningSent = false
     ActivePassports[tostring(Session.Passport)] = nil
     ExamSessions[PlayerSource] = nil
     deleteSessionVehicle(Session)
@@ -904,6 +1167,8 @@ local function advanceRouteCheckpoint(PlayerSource,Session,Expected,Points,Code,
         Session.State = "ROUTE_COMPLETE"
         Session.RouteCompletedAt = os.time()
         Session.OffRouteSince = nil
+        Session.ParkingWaitingOutsideSince = nil
+        Session.ParkingWaitingWarningSent = false
         if Session.OffRouteWarningSent and validPlayer(PlayerSource) then
             TriggerClientEvent("of_drivingschool:AntiAbuseWarning",PlayerSource,Session.Token,false)
         end
@@ -1100,6 +1365,11 @@ function API.StartExam(RequestedCategory)
         return response(false,"no_spawn_slots","Nao ha veiculos de prova disponiveis. Aguarde uma vaga.")
     end
 
+    if not ensureParkingReferenceVehicles() then
+        cleanupSession(PlayerSource,"parking_references_unavailable",false)
+        return response(false,"parking_references_unavailable","Nao foi possivel preparar a area de baliza agora.")
+    end
+
     if TestMode then
         ExamTestModes[PlayerSource] = nil
     end
@@ -1111,7 +1381,8 @@ function API.StartExam(RequestedCategory)
         plate = Session.Plate,
         state = Session.State,
         remainingPoints = Session.RemainingPoints,
-        testMode = Session.TestMode == true
+        testMode = Session.TestMode == true,
+        parkingReferences = parkingReferencePayload()
     })
 end
 
@@ -1353,6 +1624,82 @@ function API.BeginRoute(Token,Network)
     })
 end
 
+function API.DriverSeatHeartbeat(Token,Network)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"driver_seat_heartbeat",750) then
+        return false
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session or (Session.State ~= "ROUTE_ACTIVE" and Session.State ~= "ROUTE_COMPLETE" and Session.State ~= "PARKING_ACTIVE") then
+        return false
+    end
+
+    if tonumber(Network) ~= tonumber(Session.VehicleNetId) or registeredVehicle(Session) == 0 then
+        return false
+    end
+
+    Session.LastDriverSeatHeartbeatAt = GetGameTimer()
+    return true
+end
+
+function API.ReportRouteIncident(Token,Network,Kind)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"route_incident",250) then
+        return response(false,"rate_limited","")
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session then
+        return response(false,"invalid_session","",{ terminate = true })
+    end
+
+    if Session.State ~= "ROUTE_ACTIVE" then
+        return response(false,"invalid_transition","")
+    end
+
+    local IncidentKind = tostring(Kind or ""):lower()
+    local ConfigKey = IncidentKind == "collision" and "Collision" or IncidentKind == "rollover" and "Rollover" or nil
+    local IncidentConfig = ConfigKey and Config.Exam.Infractions and Config.Exam.Infractions[ConfigKey] or nil
+    if not IncidentConfig or IncidentConfig.Enabled ~= true then
+        return response(false,"invalid_incident","")
+    end
+
+    local _,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"")
+    end
+
+    local Now = GetGameTimer()
+    Session.NextIncidentAt = Session.NextIncidentAt or {}
+    if Now < (tonumber(Session.NextPhysicalIncidentAt) or 0) then
+        return response(false,"physical_incident_cooldown","",{ consumed = true })
+    end
+
+    if Now < (tonumber(Session.NextIncidentAt[IncidentKind]) or 0) then
+        return response(false,"incident_cooldown","",{ consumed = true })
+    end
+
+    Session.IncidentSequences = Session.IncidentSequences or {}
+    Session.IncidentSequences[IncidentKind] = (tonumber(Session.IncidentSequences[IncidentKind]) or 0) + 1
+    Session.NextIncidentAt[IncidentKind] = Now + math.max(1000,tonumber(IncidentConfig.CooldownMs) or 5000)
+    Session.NextPhysicalIncidentAt = Now + math.max(1000,tonumber(Config.Exam.Infractions.PhysicalIncidentCooldownMs) or 5000)
+    local Reason = IncidentKind == "rollover" and "Perda de controle do veículo." or "Colisão detectada."
+    local Applied,Failed = applyExamPenalty(
+        PlayerSource,
+        Session,
+        ("route_%s:%s"):format(IncidentKind,Session.IncidentSequences[IncidentKind]),
+        Reason,
+        1
+    )
+
+    return response(Applied,"route_incident_recorded",Reason,{
+        remainingPoints = Session.RemainingPoints,
+        terminate = Failed == true,
+        consumed = Applied == true
+    })
+end
+
 function API.ReachRouteCheckpoint(Token,Network,Index)
     local PlayerSource = source
     if not rateAllowed(PlayerSource,"route_checkpoint",200) then
@@ -1477,9 +1824,43 @@ function API.BeginParking(Token,Network)
         return response(false,"parking_unavailable","A area de baliza nao esta configurada.",{ terminate = true })
     end
 
-    local _,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
     if DriverError then
         return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    if not ensureParkingReferenceVehicles() then
+        return response(false,"parking_references_unavailable","A area de baliza ainda esta sendo preparada.")
+    end
+
+    Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return response(false,DriverError,"Permaneça no banco do motorista do veículo registrado.")
+    end
+
+    local WaitingDistance = parkingWaitingDistance(Vehicle)
+    if not WaitingDistance then
+        return response(false,"parking_waiting_unavailable","A área de espera da baliza não está configurada.",{ terminate = true })
+    end
+
+    local WaitingRadius = math.max(1.0,tonumber(Config.Exam.Parking.WaitingAreaRadius) or 25.0)
+    if WaitingDistance > WaitingRadius then
+        Session.ParkingWaitingOutsideSince = Session.ParkingWaitingOutsideSince or GetGameTimer()
+        if not Session.ParkingWaitingWarningSent and validPlayer(PlayerSource) then
+            Session.ParkingWaitingWarningSent = true
+            TriggerClientEvent("of_drivingschool:ParkingWaitingWarning",PlayerSource,Session.Token,true)
+        end
+        return response(false,"parking_waiting_position","Retorne à área de início da baliza.",{ waiting = true })
+    end
+
+    Session.ParkingWaitingOutsideSince = nil
+    if Session.ParkingWaitingWarningSent and validPlayer(PlayerSource) then
+        Session.ParkingWaitingWarningSent = false
+        TriggerClientEvent("of_drivingschool:ParkingWaitingWarning",PlayerSource,Session.Token,false)
+    end
+
+    if not reserveParkingArea(Session) then
+        return response(false,"parking_area_busy","",{ waiting = true })
     end
 
     local TimeoutMs = math.max(1000,tonumber(Config.Exam.Parking.TimeoutMs) or 180000)
@@ -1491,6 +1872,8 @@ function API.BeginParking(Token,Network)
     Session.DriverMissingSince = nil
     Session.OffRouteSince = nil
     Session.OffRouteWarningSent = false
+    Session.ParkingWaitingOutsideSince = nil
+    Session.ParkingWaitingWarningSent = false
     Session.LastActivityAt = os.time()
     debugLog(("parking_started source=%s passport=%s timeout_ms=%s"):format(PlayerSource,Session.Passport,TimeoutMs))
     return response(true,"parking_started","Prova de baliza iniciada.",{
@@ -1498,7 +1881,8 @@ function API.BeginParking(Token,Network)
         timeoutMs = TimeoutMs,
         usedReverse = false,
         remainingPoints = Session.RemainingPoints,
-        testMode = Session.TestMode == true
+        testMode = Session.TestMode == true,
+        parkingReferences = parkingReferencePayload()
     })
 end
 
@@ -1540,6 +1924,37 @@ function API.MarkParkingReverse(Token,Network)
     Session.LastActivityAt = os.time()
     debugLog(("parking_reverse_detected source=%s passport=%s signed_speed=%.3f"):format(PlayerSource,Session.Passport,SignedSpeed))
     return response(true,"parking_reverse_detected","",{ usedReverse = true })
+end
+
+function API.ReportParkingReferenceCollision(Token,Network,ReferenceNetwork)
+    local PlayerSource = source
+    if not rateAllowed(PlayerSource,"parking_reference_collision",500) then
+        return false
+    end
+
+    local Session = sessionFor(PlayerSource,Token)
+    if not Session or Session.State ~= "PARKING_ACTIVE" then
+        return false
+    end
+
+    local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Network)
+    if DriverError then
+        return false
+    end
+
+    local Reference = officialParkingReference(ReferenceNetwork)
+    if Reference == 0 then
+        return false
+    end
+
+    local MaximumDistance = math.max(2.0,tonumber(Config.Exam.Parking.ReferenceVehicles and Config.Exam.Parking.ReferenceVehicles.ContactValidationDistance) or 6.0)
+    if #(GetEntityCoords(Vehicle) - GetEntityCoords(Reference)) > MaximumDistance then
+        return false
+    end
+
+    debugLog(("parking_reference_collision source=%s passport=%s reference_network=%s"):format(PlayerSource,Session.Passport,tostring(ReferenceNetwork)))
+    finishExamFailure(PlayerSource,"parking_reference_collision","Você colidiu com um veículo durante a baliza.")
+    return true
 end
 
 function API.CompleteParking(Token,Network)
@@ -2051,6 +2466,9 @@ CreateThread(function()
         local Now = os.time()
         local NowMs = GetGameTimer()
         local Terminate = {}
+        if next(ExamSessions) then
+            ensureParkingReferenceVehicles()
+        end
         for PlayerSource,Session in pairs(ExamSessions) do
             local CurrentPassport = passport(PlayerSource)
             if not CurrentPassport or CurrentPassport ~= Session.Passport then
@@ -2063,18 +2481,28 @@ CreateThread(function()
                 Terminate[#Terminate + 1] = { Source = PlayerSource, Reason = "reservation_timeout", Message = "A reserva do veiculo de prova expirou." }
             elseif Session.VehicleNetId and registeredVehicle(Session) == 0 then
                 Terminate[#Terminate + 1] = { Source = PlayerSource, Reason = "vehicle_missing", Message = "O veiculo da prova nao esta mais disponivel." }
-            elseif Session.State == "ROUTE_ACTIVE" or Session.State == "PARKING_ACTIVE" then
+            elseif Session.State == "ROUTE_ACTIVE" or Session.State == "ROUTE_COMPLETE" or Session.State == "PARKING_ACTIVE" then
                 local AntiAbuse = Config.Exam.AntiAbuse or {}
                 local Vehicle,_,DriverError = registeredExamDriver(PlayerSource,Session,Session.VehicleNetId)
+                local DriverTermination = false
                 if DriverError then
-                    Session.DriverMissingSince = Session.DriverMissingSince or NowMs
-                    if NowMs - Session.DriverMissingSince >= math.max(1000,tonumber(AntiAbuse.DriverSeatGraceMs) or 15000) then
-                        Terminate[#Terminate + 1] = {
-                            Source = PlayerSource,
-                            Reason = "driver_seat_abandoned",
-                            Message = "Voce permaneceu fora do banco do motorista por tempo demais.",
-                            Failed = true
-                        }
+                    local HeartbeatFreshness = math.max(1000,tonumber(AntiAbuse.DriverSeatHeartbeatFreshnessMs) or 3000)
+                    local HeartbeatFresh = DriverError == "driver_required"
+                        and Session.LastDriverSeatHeartbeatAt
+                        and NowMs - Session.LastDriverSeatHeartbeatAt <= HeartbeatFreshness
+                    if HeartbeatFresh then
+                        Session.DriverMissingSince = nil
+                    else
+                        Session.DriverMissingSince = Session.DriverMissingSince or NowMs
+                        if NowMs - Session.DriverMissingSince >= math.max(1000,tonumber(AntiAbuse.DriverSeatGraceMs) or 15000) then
+                            Terminate[#Terminate + 1] = {
+                                Source = PlayerSource,
+                                Reason = "driver_seat_abandoned",
+                                Message = "Voce permaneceu fora do banco do motorista por tempo demais.",
+                                Failed = true
+                            }
+                            DriverTermination = true
+                        end
                     end
                 else
                     Session.DriverMissingSince = nil
@@ -2114,6 +2542,41 @@ CreateThread(function()
                         end
                     end
                 end
+
+                if Session.State == "ROUTE_COMPLETE" and not DriverTermination and Vehicle ~= 0 then
+                    local WaitingDistance = parkingWaitingDistance(Vehicle)
+                    local WaitingRadius = math.max(1.0,tonumber(Config.Exam.Parking and Config.Exam.Parking.WaitingAreaRadius) or 25.0)
+                    if not WaitingDistance then
+                        Terminate[#Terminate + 1] = {
+                            Source = PlayerSource,
+                            Reason = "parking_waiting_unavailable",
+                            Message = "A área de espera da baliza não está configurada.",
+                            Failed = true
+                        }
+                    elseif WaitingDistance > WaitingRadius then
+                        Session.ParkingWaitingOutsideSince = Session.ParkingWaitingOutsideSince or NowMs
+                        if not Session.ParkingWaitingWarningSent and validPlayer(PlayerSource) then
+                            Session.ParkingWaitingWarningSent = true
+                            TriggerClientEvent("of_drivingschool:ParkingWaitingWarning",PlayerSource,Session.Token,true)
+                        end
+
+                        local WaitingGraceMs = math.max(1000,tonumber(Config.Exam.Parking and Config.Exam.Parking.WaitingAreaGraceMs) or 10000)
+                        if NowMs - Session.ParkingWaitingOutsideSince >= WaitingGraceMs then
+                            Terminate[#Terminate + 1] = {
+                                Source = PlayerSource,
+                                Reason = "parking_waiting_area_abandoned",
+                                Message = "A prova foi encerrada por afastamento prolongado da área de baliza.",
+                                Failed = true
+                            }
+                        end
+                    else
+                        Session.ParkingWaitingOutsideSince = nil
+                        if Session.ParkingWaitingWarningSent and validPlayer(PlayerSource) then
+                            Session.ParkingWaitingWarningSent = false
+                            TriggerClientEvent("of_drivingschool:ParkingWaitingWarning",PlayerSource,Session.Token,false)
+                        end
+                    end
+                end
             end
         end
 
@@ -2147,6 +2610,8 @@ AddEventHandler("onResourceStop",function(ResourceName)
 
     ResourceStopping = true
     deleteInstructor(InstructorNpc)
+    deleteParkingReference("Front")
+    deleteParkingReference("Rear")
 
     local Sources = {}
     for PlayerSource in pairs(ExamSessions) do
@@ -2162,4 +2627,5 @@ AddEventHandler("onResourceStop",function(ResourceName)
     SpawnReservations = {}
     RateLimits = {}
     ExamTestModes = {}
+    ParkingAreaOwner = nil
 end)
